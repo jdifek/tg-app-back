@@ -1,4 +1,7 @@
 {
+  "scripts": {
+  "start": "node index.js"
+},
   "dependencies": {
     "@prisma/client": "^6.16.2",
     "cors": "^2.8.5",
