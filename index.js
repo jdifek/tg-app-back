@@ -26,11 +26,15 @@ const limiter = rateLimit({
 app.use(limiter);
 
 // Routes
+app.use('/api/users', require('./routes/users')); 
 app.use('/api/products', require('./routes/products'));
 app.use('/api/bundles', require('./routes/bundles'));
 app.use('/api/orders', require('./routes/orders'));
 app.use('/api/wishlist', require('./routes/wishlist'));
+app.use('/api/services', require('./routes/services'));
+app.use('/api/subscriptions', require('./routes/subscriptions'));
 app.use('/api/admin', require('./routes/admin'));
+
 
 // Error handling middleware
 app.use((err, req, res, next) => {
