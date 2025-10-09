@@ -3,19 +3,6 @@ const prisma = new PrismaClient();
 
 async function main() {
   // Создаем категории
-  const category1 = await prisma.category.create({
-    data: {
-      name: 'Physical Products',
-      description: 'Physical items that need shipping'
-    }
-  });
-
-  const category2 = await prisma.category.create({
-    data: {
-      name: 'Digital Products',
-      description: 'Digital content and downloads'
-    }
-  });
 
   // Создаем примеры продуктов
   await prisma.product.createMany({
@@ -25,14 +12,12 @@ async function main() {
         description: 'Exclusive photo collection',
         price: 29.99,
         image: 'https://images.unsplash.com/photo-1581291518857-4e27b48ff24e', // Стоковое фото
-        categoryId: category2.id
       },
       {
         name: 'Signed Print',
         description: 'Autographed physical print',
         price: 49.99,
         image: 'https://images.unsplash.com/photo-1523206489230-c012c64b2b48', // Фото принта
-        categoryId: category1.id
       }
     ]
   });

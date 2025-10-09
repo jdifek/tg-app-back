@@ -10,7 +10,6 @@ const prisma = new PrismaClient();
 router.post('/products', [
   body('name').notEmpty().withMessage('Name is required'),
   body('price').isFloat({ min: 0 }).withMessage('Price must be a positive number'),
-  body('categoryId').notEmpty().withMessage('Category ID is required')
 ], async (req, res) => {
   try {
     const errors = validationResult(req);
@@ -20,7 +19,6 @@ router.post('/products', [
 
     const product = await prisma.product.create({
       data: req.body,
-      include: { category: true }
     });
     res.status(201).json(product);
   } catch (error) {
@@ -36,7 +34,6 @@ router.put('/products/:id', async (req, res) => {
     const product = await prisma.product.update({
       where: { id },
       data: req.body,
-      include: { category: true }
     });
     res.json(product);
   } catch (error) {
