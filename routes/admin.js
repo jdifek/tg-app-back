@@ -78,7 +78,18 @@ router.post('/bundles', [
     res.status(500).json({ error: 'Failed to create bundle' });
   }
 });
-
+// GET /api/admin/categories - получить все категории
+router.get('/categories', async (req, res) => {
+  try {
+    const categories = await prisma.category.findMany({
+      orderBy: { name: 'asc' }
+    });
+    res.json(categories);
+  } catch (error) {
+    console.error('Error fetching categories:', error);
+    res.status(500).json({ error: 'Failed to fetch categories' });
+  }
+});
 // PUT /api/admin/bundles/:id - обновить бандл
 router.put('/bundles/:id', async (req, res) => {
   try {
