@@ -42,14 +42,15 @@ model Product {
 
   @@map("products")
 }
-
 model Bundle {
   id          String      @id @default(cuid())
   name        String
   description String?
   price       Float
   image       String?
-  content     String?     // JSON строка с контентом бандла
+  photos      Int         @default(0)
+  videos      Int         @default(0)
+  exclusive   Boolean     @default(false)
   isActive    Boolean     @default(true)
   createdAt   DateTime    @default(now())
   updatedAt   DateTime    @updatedAt

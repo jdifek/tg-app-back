@@ -1,11 +1,10 @@
 const express = require('express');
-const { PrismaClient } = require('@prisma/client');
 const { body, validationResult } = require('express-validator');
 
 const router = express.Router();
 const multer = require('multer');
 const supabase = require('../supabaseClient');
-const prisma = new PrismaClient();
+const prisma = require('../prisma/prisma');
 
 // Настраиваем multer (в память, без сохранения на диск)
 const storage = multer.memoryStorage();
@@ -121,10 +120,10 @@ router.put('/products/:id', upload.single('image'), async (req, res) => {
     res.status(500).json({ error: 'Failed to update product' });
   }
 });
-// PUT /api/admin/bundles/:id - обновить бандл
+// ==================== CREATE BUNDLE ====================
 router.post(
   '/bundles',
-  upload.single('image'), // принимаем файл с фронта
+  upload.single('image'),
   [
     body('name').notEmpty().withMessage('Name is required'),
     body('price').isFloat({ min: 0 }).withMessage('Price must be a positive number'),
@@ -136,14 +135,10 @@ router.post(
         return res.status(400).json({ errors: errors.array() });
       }
 
-      const { name, price, description,content } = req.body;
+      const { name, price, description, photos, videos, exclusive } = req.body;
+
       let imageUrl = null;
-      let parsedContent;
-      try {
-        parsedContent = content ? JSON.parse(content) : undefined;
-      } catch (e) {
-        return res.status(400).json({ error: "Invalid JSON in content" });
-      }
+
       // Загружаем фото в Supabase
       if (req.file) {
         const fileExt = req.file.originalname.split('.').pop();
@@ -174,7 +169,9 @@ router.post(
           name,
           price: parseFloat(price),
           description,
-          content,
+          photos: photos ? parseInt(photos) : 0,
+          videos: videos ? parseInt(videos) : 0,
+          exclusive: exclusive === 'true',
           image: imageUrl,
         },
       });
@@ -191,15 +188,10 @@ router.post(
 router.put('/bundles/:id', upload.single('image'), async (req, res) => {
   try {
     const { id } = req.params;
-    const { name, price, description, content } = req.body;
+    const { name, price, description, photos, videos, exclusive } = req.body;
 
     let imageUrl = undefined;
-    let parsedContent;
-    try {
-      parsedContent = content ? JSON.parse(content) : undefined;
-    } catch (e) {
-      return res.status(400).json({ error: "Invalid JSON in content" });
-    }
+
     // Если новое фото загружено — обновляем в Supabase
     if (req.file) {
       const fileExt = req.file.originalname.split('.').pop();
@@ -231,7 +223,9 @@ router.put('/bundles/:id', upload.single('image'), async (req, res) => {
         name,
         price: price ? parseFloat(price) : undefined,
         description,
-        content,
+        photos: photos ? parseInt(photos) : 0,
+        videos: videos ? parseInt(videos) : 0,
+        exclusive: exclusive === 'true',
         image: imageUrl,
       },
     });
