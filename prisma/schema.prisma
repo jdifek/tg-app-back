@@ -58,6 +58,14 @@ model Bundle {
 
   @@map("bundles")
 }
+enum OrderType {
+  PRODUCT
+  BUNDLE
+  VIP
+  CUSTOM_VIDEO
+  VIDEO_CALL
+  RATING
+}
 
 model Order {
   id          String      @id @default(cuid())
@@ -69,6 +77,8 @@ model Order {
   lastName    String?
   address     String?
   city        String?
+    orderType    OrderType
+
   zipCode     String?
   country     String?
   createdAt   DateTime    @default(now())
