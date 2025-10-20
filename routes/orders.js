@@ -4,6 +4,37 @@ const { body, validationResult } = require('express-validator');
 
 const router = express.Router();
 const prisma = new PrismaClient();
+const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
+
+router.post("/stars", async (req, res) => {
+  const { title, description, amount } = req.body;
+
+  try {
+    const response = await fetch(
+      `https://api.telegram.org/bot${BOT_TOKEN}/createInvoiceLink`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title,
+          description,
+          payload: "order_payment",
+          currency: "XTR",
+          prices: [{ label: title, amount }],
+        }),
+      }
+    );
+
+    const data = await response.json();
+    if (!data.ok) {
+      return res.status(400).json({ error: data.description });
+    }
+
+    res.json({ invoice_url: data.result });
+  } catch (err) {
+    res.status(500).json({ error: "Ошибка при создании счёта" });
+  }
+});
 
 // POST /api/orders - создать заказ
 router.post('/', [
@@ -111,6 +142,32 @@ router.post('/', [
   } catch (error) {
     console.error('Error creating order:', error);
     res.status(500).json({ error: 'Failed to create order' });
+  }
+});
+
+// PATCH /api/orders/:id/payment-status - обновить статус платежа
+router.patch('/:id/payment-status', [
+  body('paymentStatus').isIn(['PENDING', 'AWAITING_CHECK', 'CONFIRMED', 'FAILED'])
+    .withMessage('Invalid payment status'),
+], async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { paymentStatus } = req.body;
+
+    const order = await prisma.order.update({
+      where: { id },
+      data: { paymentStatus, updatedAt: new Date() },
+      include: {
+        orderItems: {
+          include: { product: true, bundle: true },
+        },
+      },
+    });
+
+    res.json(order);
+  } catch (error) {
+    console.error('Error updating payment status:', error);
+    res.status(500).json({ error: 'Failed to update payment status' });
   }
 });
 

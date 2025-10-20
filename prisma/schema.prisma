@@ -13,21 +13,37 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+// ---------- PAYMENT METHODS ----------
+
+enum PaymentMethod {
+  CARD_CRYPTO // Tribute (Card/Crypto)
+  USDT_TRC20 // Оплата в USDT (TRC20)
+  PAYPAL // PayPal
+  STARS // Telegram Stars
+  MANUAL // Ручная (на случай других)
+}
+
+enum PaymentStatus {
+  PENDING // Ожидает оплаты
+  AWAITING_CHECK // Пользователь оплатил, но админ должен подтвердить
+  CONFIRMED // Оплата подтверждена админом
+  FAILED // Ошибка / отмена
+}
+
+// ---------- MODELS ----------
 
 model User {
-  id        String   @id @default(cuid())
-  telegramId String  @unique
-  username  String?
-  firstName String?
-  lastName  String?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  orders    Order[]
+  id         String   @id @default(cuid())
+  telegramId String   @unique
+  username   String?
+  firstName  String?
+  lastName   String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  orders     Order[]
 
   @@map("users")
 }
-
-
 
 model Product {
   id          String      @id @default(cuid())
@@ -42,6 +58,7 @@ model Product {
 
   @@map("products")
 }
+
 model Bundle {
   id          String      @id @default(cuid())
   name        String
@@ -58,6 +75,7 @@ model Bundle {
 
   @@map("bundles")
 }
+
 enum OrderType {
   PRODUCT
   BUNDLE
@@ -68,22 +86,23 @@ enum OrderType {
 }
 
 model Order {
-  id          String      @id @default(cuid())
-  user        User        @relation(fields: [userId], references: [id])
-  userId      String
-  status      OrderStatus @default(PENDING)
-  totalAmount Float
-  firstName   String?
-  lastName    String?
-  address     String?
-  city        String?
-    orderType    OrderType
-
-  zipCode     String?
-  country     String?
-  createdAt   DateTime    @default(now())
-  updatedAt   DateTime    @updatedAt
-  orderItems  OrderItem[]
+  id            String        @id @default(cuid())
+  user          User          @relation(fields: [userId], references: [id])
+  userId        String
+  orderType     OrderType
+  status        OrderStatus   @default(PENDING)
+  paymentMethod PaymentMethod @default(MANUAL)
+  paymentStatus PaymentStatus @default(PENDING)
+  totalAmount   Float
+  firstName     String?
+  lastName      String?
+  address       String?
+  city          String?
+  zipCode       String?
+  country       String?
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+  orderItems    OrderItem[]
 
   @@map("orders")
 }
