@@ -20,7 +20,12 @@ router.post("/stars", async (req, res) => {
           description,
           payload: "order_payment",
           currency: "XTR",
-          prices: [{ label: title, amount }],
+          prices: [
+            {
+              label: title,
+              amount: Math.round(amount), // без умножения на 100!
+            },
+          ],
         }),
       }
     );
@@ -32,9 +37,11 @@ router.post("/stars", async (req, res) => {
 
     res.json({ invoice_url: data.result });
   } catch (err) {
+    console.error(err);
     res.status(500).json({ error: "Ошибка при создании счёта" });
   }
 });
+
 
 // POST /api/orders - создать заказ
 router.post('/', [
