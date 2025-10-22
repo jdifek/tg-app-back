@@ -5,11 +5,31 @@ const { body, validationResult } = require('express-validator');
 const router = express.Router();
 const prisma = new PrismaClient();
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
-
 router.post("/stars", async (req, res) => {
-  const { title, description, amount } = req.body;
+  const { title, description, amount, userId } = req.body;
+
+  if (!userId) return res.status(400).json({ error: "UserId is required" });
 
   try {
+    // ищем или создаём пользователя
+    let user = await prisma.user.findUnique({ where: { telegramId: userId } });
+    if (!user) {
+      user = await prisma.user.create({ data: { telegramId: userId } });
+    }
+
+    // создаём заказ типа STARS
+    const order = await prisma.order.create({
+      data: {
+        userId: user.id,
+        orderType: "RATING", // или STARS, если добавишь в enum
+        paymentMethod: "STARS",
+        totalAmount: amount,
+        status: "PENDING",
+        paymentStatus: "PENDING",
+      },
+    });
+
+    // создаём invoice через Telegram API
     const response = await fetch(
       `https://api.telegram.org/bot${BOT_TOKEN}/createInvoiceLink`,
       {
@@ -18,22 +38,15 @@ router.post("/stars", async (req, res) => {
         body: JSON.stringify({
           title,
           description,
-          payload: "order_payment",
+          payload: order.id, // связываем с order.id
           currency: "XTR",
-          prices: [
-            {
-              label: title,
-              amount: Math.round(amount), // без умножения на 100!
-            },
-          ],
+          prices: [{ label: title, amount: Math.round(amount) }],
         }),
       }
     );
 
     const data = await response.json();
-    if (!data.ok) {
-      return res.status(400).json({ error: data.description });
-    }
+    if (!data.ok) return res.status(400).json({ error: data.description });
 
     res.json({ invoice_url: data.result });
   } catch (err) {
@@ -41,6 +54,7 @@ router.post("/stars", async (req, res) => {
     res.status(500).json({ error: "Ошибка при создании счёта" });
   }
 });
+
 
 
 // POST /api/orders - создать заказ
