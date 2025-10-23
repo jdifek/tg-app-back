@@ -193,22 +193,30 @@ router.patch('/:id/payment-status', [
 });
 
 // PATCH /api/orders/:id/status - обновить статус заказа
-router.patch('/:id/status', [
-  body('status').isIn(['PENDING', 'PROCESSING', 'COMPLETED', 'CANCELLED']).withMessage('Invalid status'),
-  body('paymentMethod').optional()
-], async (req, res) => {
+// PATCH /api/orders/:id/status - обновить статус заказа
+router.patch('/:id/status', async (req, res) => {
   try {
     const { id } = req.params;
-    const { status, paymentMethod } = req.body;
+    const { status } = req.body;
 
-    const order = await prisma.order.update({
+    // Валидация статуса заказа
+    const validStatuses = ['PENDING', 'PROCESSING', 'COMPLETED', 'CANCELLED'];
+    if (!validStatuses.includes(status)) {
+      return res.status(400).json({ 
+        error: 'Invalid order status',
+        validStatuses: validStatuses 
+      });
+    }
+
+    // Обновляем только статус заказа, НЕ трогая paymentStatus
+    const updatedOrder = await prisma.order.update({
       where: { id },
-      data: {
-        status,
-        paymentMethod: paymentMethod || undefined,
+      data: { 
+        status,  // обновляем только статус заказа
         updatedAt: new Date()
       },
       include: {
+        user: true,
         orderItems: {
           include: {
             product: true,
@@ -218,10 +226,10 @@ router.patch('/:id/status', [
       }
     });
 
-    res.json(order);
+    res.json(updatedOrder);
   } catch (error) {
-    console.error('Error updating order:', error);
-    res.status(500).json({ error: 'Failed to update order' });
+    console.error('Error updating order status:', error);
+    res.status(500).json({ error: 'Failed to update order status' });
   }
 });
 

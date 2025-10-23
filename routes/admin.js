@@ -9,7 +9,44 @@ const prisma = require('../prisma/prisma');
 // Настраиваем multer (в память, без сохранения на диск)
 const storage = multer.memoryStorage();
 const upload = multer({ storage });
+// PATCH /api/orders/:id/payment-status - обновить статус платежа
+router.patch('/:id/payment-status', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { paymentStatus } = req.body;
 
+    // Валидация статуса платежа
+    const validPaymentStatuses = ['PENDING', 'AWAITING_CHECK', 'CONFIRMED', 'FAILED'];
+    if (!validPaymentStatuses.includes(paymentStatus)) {
+      return res.status(400).json({ 
+        error: 'Invalid payment status',
+        validStatuses: validPaymentStatuses 
+      });
+    }
+
+    const updatedOrder = await prisma.order.update({
+      where: { id },
+      data: { 
+        paymentStatus,
+        updatedAt: new Date()
+      },
+      include: {
+        user: true,
+        orderItems: {
+          include: {
+            product: true,
+            bundle: true
+          }
+        }
+      }
+    });
+
+    res.json(updatedOrder);
+  } catch (error) {
+    console.error('Error updating payment status:', error);
+    res.status(500).json({ error: 'Failed to update payment status' });
+  }
+});
 // ==================== CREATE PRODUCT ====================
 router.post(
   '/products',
