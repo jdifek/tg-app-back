@@ -1,10 +1,17 @@
 const express = require('express');
 const { PrismaClient } = require('@prisma/client');
 const { body, validationResult } = require('express-validator');
+const multer = require('multer');
+const supabase = require('../supabaseClient');
 
 const router = express.Router();
 const prisma = new PrismaClient();
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
+
+const storage = multer.memoryStorage();
+const upload = multer({ storage });
+
+
 router.post("/stars", async (req, res) => {
   const { title, description, amount, userId } = req.body;
 
@@ -54,8 +61,6 @@ router.post("/stars", async (req, res) => {
     res.status(500).json({ error: "Ошибка при создании счёта" });
   }
 });
-
-
 
 // POST /api/orders - создать заказ
 router.post('/', [
@@ -166,6 +171,109 @@ router.post('/', [
   }
 });
 
+
+// PATCH /api/orders/:id — прикрепить скриншот
+router.patch('/:id-rating', upload.single('rating'), async (req, res) => {
+  try {
+    const { id } = req.params;
+    const existingOrder = await prisma.order.findUnique({ where: { id } });
+
+    if (!existingOrder) {
+      return res.status(404).json({ error: 'Order not found' });
+    }
+
+    if (!req.file) {
+      return res.status(400).json({ error: 'rating file is required' });
+    }
+
+    // ... остальной код загрузки в Supabase как у тебя ...
+    const fileExt = req.file.originalname.split('.').pop();
+    const fileName = `orders/${Date.now()}-${Math.random()
+      .toString(36)
+      .substring(7)}.${fileExt}`;
+
+    const { data, error: uploadError } = await supabase.storage
+      .from(process.env.SUPABASE_BUCKET)
+      .upload(fileName, req.file.buffer, {
+        contentType: req.file.mimetype,
+        upsert: false,
+      });
+
+    if (uploadError) {
+      console.error('Supabase upload error:', uploadError);
+      return res.status(500).json({ error: 'Failed to upload rating' });
+    }
+
+    const { data: publicUrlData } = supabase.storage
+      .from(process.env.SUPABASE_BUCKET)
+      .getPublicUrl(fileName);
+
+    const ratingUrl = publicUrlData.publicUrl;
+
+    const updatedOrder = await prisma.order.update({
+      where: { id },
+      data: { rating: ratingUrl, updatedAt: new Date() },
+      include: { user: true, orderItems: { include: { product: true, bundle: true } } },
+    });
+
+    res.json(updatedOrder);
+  } catch (err) {
+    console.error('Error updating order rating:', err);
+    res.status(500).json({ error: 'Failed to update order rating' });
+  }
+});
+
+// PATCH /api/orders/:id — прикрепить скриншот
+router.patch('/:id', upload.single('screenshot'), async (req, res) => {
+  try {
+    const { id } = req.params;
+    const existingOrder = await prisma.order.findUnique({ where: { id } });
+
+    if (!existingOrder) {
+      return res.status(404).json({ error: 'Order not found' });
+    }
+
+    if (!req.file) {
+      return res.status(400).json({ error: 'Screenshot file is required' });
+    }
+
+    // ... остальной код загрузки в Supabase как у тебя ...
+    const fileExt = req.file.originalname.split('.').pop();
+    const fileName = `orders/${Date.now()}-${Math.random()
+      .toString(36)
+      .substring(7)}.${fileExt}`;
+
+    const { data, error: uploadError } = await supabase.storage
+      .from(process.env.SUPABASE_BUCKET)
+      .upload(fileName, req.file.buffer, {
+        contentType: req.file.mimetype,
+        upsert: false,
+      });
+
+    if (uploadError) {
+      console.error('Supabase upload error:', uploadError);
+      return res.status(500).json({ error: 'Failed to upload screenshot' });
+    }
+
+    const { data: publicUrlData } = supabase.storage
+      .from(process.env.SUPABASE_BUCKET)
+      .getPublicUrl(fileName);
+
+    const screenshotUrl = publicUrlData.publicUrl;
+
+    const updatedOrder = await prisma.order.update({
+      where: { id },
+      data: { screenshot: screenshotUrl, updatedAt: new Date() },
+      include: { user: true, orderItems: { include: { product: true, bundle: true } } },
+    });
+
+    res.json(updatedOrder);
+  } catch (err) {
+    console.error('Error updating order screenshot:', err);
+    res.status(500).json({ error: 'Failed to update order screenshot' });
+  }
+});
+
 // PATCH /api/orders/:id/payment-status - обновить статус платежа
 router.patch('/:id/payment-status', [
   body('paymentStatus').isIn(['PENDING', 'AWAITING_CHECK', 'CONFIRMED', 'FAILED'])
@@ -202,16 +310,16 @@ router.patch('/:id/status', async (req, res) => {
     // Валидация статуса заказа
     const validStatuses = ['PENDING', 'PROCESSING', 'COMPLETED', 'CANCELLED'];
     if (!validStatuses.includes(status)) {
-      return res.status(400).json({ 
+      return res.status(400).json({
         error: 'Invalid order status',
-        validStatuses: validStatuses 
+        validStatuses: validStatuses
       });
     }
 
     // Обновляем только статус заказа, НЕ трогая paymentStatus
     const updatedOrder = await prisma.order.update({
       where: { id },
-      data: { 
+      data: {
         status,  // обновляем только статус заказа
         updatedAt: new Date()
       },
@@ -237,7 +345,7 @@ router.patch('/:id/status', async (req, res) => {
 router.get('/:userId', async (req, res) => {
   try {
     const { userId } = req.params;
-    
+
     const user = await prisma.user.findUnique({
       where: { telegramId: userId }
     });
@@ -270,7 +378,7 @@ router.get('/:userId', async (req, res) => {
 router.get('/detail/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    
+
     const order = await prisma.order.findUnique({
       where: { id },
       include: {
