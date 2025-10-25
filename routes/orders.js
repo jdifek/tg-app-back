@@ -114,12 +114,12 @@ router.post('/', [
 
     // Проверяем пользователя
     let user = await prisma.user.findUnique({
-      where: { telegramId: userId }
+      where: { userId: userId }
     });
 
     if (!user) {
       user = await prisma.user.create({
-        data: { telegramId: userId }
+        data: { userId: userId }
       });
     }
 
