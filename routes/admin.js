@@ -1,5 +1,7 @@
 const express = require('express');
 const { body, validationResult } = require('express-validator');
+const axios = require('axios');
+const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 
 const router = express.Router();
 const multer = require('multer');
@@ -315,7 +317,6 @@ router.delete('/bundles/:id', async (req, res) => {
   }
 });
 
-// GET /api/admin/orders - получить все заказы
 router.get('/orders', async (req, res) => {
   try {
     const orders = await prisma.order.findMany({
@@ -330,6 +331,7 @@ router.get('/orders', async (req, res) => {
       },
       orderBy: { createdAt: 'desc' }
     });
+
     res.json(orders);
   } catch (error) {
     console.error('Error fetching orders:', error);
@@ -372,6 +374,67 @@ router.delete('/wishlist/:id', async (req, res) => {
   } catch (error) {
     console.error('Error deleting wishlist item:', error);
     res.status(500).json({ error: 'Failed to delete wishlist item' });
+  }
+});
+
+// POST /api/admin/send-feedback
+router.post('/send-feedback', async (req, res) => {
+  try {
+    const { userId, orderId, message } = req.body;
+
+    if (!userId || !orderId || !message?.trim()) {
+      return res.status(400).json({
+        error: 'userId, orderId, and non-empty message are required',
+      });
+    }
+
+    // 1️⃣ Получаем Telegram ID пользователя
+    const user = await prisma.user.findUnique({
+      where: { telegramId: userId.toString() },
+      select: { telegramId: true },
+    });
+    
+
+    if (!user || !user.telegramId) {
+      return res.status(404).json({
+        error: 'User not found or missing Telegram ID',
+      });
+    }
+
+    // 2️⃣ Формируем сообщение
+    const feedbackMessage = `
+🌟 <b>Dick Rating Feedback</b>
+━━━━━━━━━━━━━━━━━━━━
+📦 <b>Order ID:</b> <code>${orderId.slice(0, 8)}...</code>
+
+📝 <b>Your Rating:</b>
+${message}
+
+━━━━━━━━━━━━━━━━━━━━
+💜 Thank you for using our service!
+    `.trim();
+
+    // 3️⃣ Отправляем через Telegram API
+    const telegramResponse = await axios.post(
+      `https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`,
+      {
+        chat_id: user.telegramId,
+        text: feedbackMessage,
+        parse_mode: 'HTML',
+      }
+    );
+
+    if (!telegramResponse.data.ok) {
+      throw new Error('Failed to send Telegram message');
+    }
+
+    res.json({ success: true, message: 'Feedback sent successfully' });
+  } catch (error) {
+    console.error('Error sending feedback:', error);
+    res.status(500).json({
+      error: 'Failed to send feedback',
+      details: error.response?.data || error.message,
+    });
   }
 });
 
