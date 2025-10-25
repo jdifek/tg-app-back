@@ -103,6 +103,7 @@ router.post('/', [
       orderType,
       items,
       firstName,
+      telegramId,
       username,
       lastName,
       address,
@@ -167,7 +168,8 @@ router.post('/', [
     // Создаем заказ
     const order = await prisma.order.create({
       data: {
-        userId: user.telegramId,
+        userId: user.id,
+        telegramId: user.telegramId,
         orderType,
         totalAmount,
         firstName,

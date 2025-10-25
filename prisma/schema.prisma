@@ -89,6 +89,7 @@ model Order {
   id            String        @id @default(cuid())
   user          User          @relation(fields: [userId], references: [id])
   userId        String
+  telegramId        String
   orderType     OrderType
   status        OrderStatus   @default(PENDING)
   paymentMethod PaymentMethod @default(MANUAL)
