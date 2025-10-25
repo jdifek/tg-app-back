@@ -376,7 +376,52 @@ router.delete('/wishlist/:id', async (req, res) => {
     res.status(500).json({ error: 'Failed to delete wishlist item' });
   }
 });
+// POST /api/admin/send-message
+router.post('/send-message', async (req, res) => {
+  try {
+    const { userId, message } = req.body;
 
+    if (!userId || !message?.trim()) {
+      return res.status(400).json({
+        error: 'userId and non-empty message are required',
+      });
+    }
+
+    // Получаем Telegram ID пользователя
+    const user = await prisma.user.findUnique({
+      where: { telegramId: userId.toString() },
+      select: { telegramId: true },
+    });
+
+    if (!user || !user.telegramId) {
+      return res.status(404).json({
+        error: 'User not found or missing Telegram ID',
+      });
+    }
+
+    // Отправляем через Telegram API
+    const telegramResponse = await axios.post(
+      `https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`,
+      {
+        chat_id: user.telegramId,
+        text: message,
+        parse_mode: 'HTML',
+      }
+    );
+
+    if (!telegramResponse.data.ok) {
+      throw new Error('Failed to send Telegram message');
+    }
+
+    res.json({ success: true, message: 'Message sent successfully' });
+  } catch (error) {
+    console.error('Error sending message:', error);
+    res.status(500).json({
+      error: 'Failed to send message',
+      details: error.response?.data || error.message,
+    });
+  }
+});
 // POST /api/admin/send-feedback
 router.post('/send-feedback', async (req, res) => {
   try {
