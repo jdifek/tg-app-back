@@ -175,6 +175,7 @@ router.post('/', [
         firstName,
         lastName,
         address,
+        username,
         city,
         zipCode,
         country,

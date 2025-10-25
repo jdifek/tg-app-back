@@ -97,6 +97,7 @@ model Order {
   totalAmount   Float
   firstName     String?
   lastName      String?
+  username      String?
   address       String?
   city          String?
   zipCode       String?
