@@ -3,6 +3,7 @@ const { PrismaClient } = require('@prisma/client');
 const { body, validationResult } = require('express-validator');
 const multer = require('multer');
 const supabase = require('../supabaseClient');
+const axios = require('axios');
 
 const router = express.Router();
 const prisma = new PrismaClient();
@@ -10,7 +11,31 @@ const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 
 const storage = multer.memoryStorage();
 const upload = multer({ storage });
+const ADMIN_IDS = ['6970790362', '5505526221'];
+async function notifyAdmins(order, username) {
+  const message = `
+📦 <b>Новый заказ создан!</b>
+───────────────
+🆔 <b>ID заказа:</b> ${order.id}
+👤 <b>Пользователь:</b> ${order.firstName + `(${order.username})` || 'Неизвестен'}
+📗 <b>Тип:</b> ${order.orderType}
+💰 <b>Сумма:</b> ${order.totalAmount} USD
+───────────────
+⚙️ Перейди в админку для обработки.
+  `;
 
+  for (const adminId of ADMIN_IDS) {
+    try {
+      await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+        chat_id: adminId,
+        text: message,
+        parse_mode: 'HTML',
+      });
+    } catch (err) {
+      console.error(`❌ Ошибка при отправке уведомления админу ${adminId}:`, err.response?.data || err.message);
+    }
+  }
+}
 
 router.post("/stars", async (req, res) => {
   const { title, description, amount, userId } = req.body;
@@ -78,6 +103,7 @@ router.post('/', [
       orderType,
       items,
       firstName,
+      username,
       lastName,
       address,
       city,
@@ -163,14 +189,13 @@ router.post('/', [
         }
       }
     });
-
+    await notifyAdmins(order, username);
     res.status(201).json(order);
   } catch (error) {
     console.error('Error creating order:', error);
     res.status(500).json({ error: 'Failed to create order' });
   }
 });
-
 
 // PATCH /api/orders/:id — прикрепить скриншот
 router.patch('/:id-rating', upload.single('rating'), async (req, res) => {
