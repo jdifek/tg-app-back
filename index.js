@@ -4,9 +4,13 @@ const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
+const { PrismaClient } = require('@prisma/client');
+
 require('dotenv').config();
 
 const app = express();
+const prisma = new PrismaClient();
+
 const PORT = process.env.PORT || 3001;
 app.set('trust proxy', 1); 
 // Middleware
