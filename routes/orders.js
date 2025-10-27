@@ -70,7 +70,7 @@ router.post("/stars", async (req, res) => {
         body: JSON.stringify({
           title,
           description,
-          payload: order.id, // связываем с order.id
+          payload: JSON.stringify({ orderId: order.id }),
           currency: "XTR",
           prices: [{ label: title, amount: Math.round(amount) }],
         }),
