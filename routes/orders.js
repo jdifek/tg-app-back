@@ -40,28 +40,54 @@ async function notifyAdmins(order, username) {
 router.post("/stars", async (req, res) => {
   const { title, description, amount, userId } = req.body;
 
-  if (!userId) return res.status(400).json({ error: "UserId is required" });
+  console.log('🌟 === STARS PAYMENT REQUEST ===');
+  console.log('📥 Request body:', { title, description, amount, userId });
+
+  if (!userId) {
+    console.log('❌ UserId not provided');
+    return res.status(400).json({ error: "UserId is required" });
+  }
 
   try {
-    // ищем или создаём пользователя
+    // 1. Находим или создаём пользователя
+    console.log('🔍 Looking for user with telegramId:', userId);
     let user = await prisma.user.findUnique({ where: { telegramId: userId } });
+    
     if (!user) {
+      console.log('➕ User not found, creating new user...');
       user = await prisma.user.create({ data: { telegramId: userId } });
+      console.log('✅ New user created:', { id: user.id, telegramId: user.telegramId });
+    } else {
+      console.log('✅ User found:', { id: user.id, telegramId: user.telegramId });
     }
 
-    // создаём заказ типа STARS
+    // 2. СНАЧАЛА создаём заказ
+    console.log('📦 Creating order...');
     const order = await prisma.order.create({
       data: {
         userId: user.id,
-        orderType: "RATING", // или STARS, если добавишь в enum
+        telegramId: userId,
+        orderType: "RATING",
         paymentMethod: "STARS",
         totalAmount: amount,
         status: "PENDING",
         paymentStatus: "PENDING",
       },
     });
+    console.log('✅ Order created:', {
+      orderId: order.id,
+      userId: order.userId,
+      telegramId: order.telegramId,
+      amount: order.totalAmount,
+      status: order.status,
+      paymentStatus: order.paymentStatus
+    });
 
-    // создаём invoice через Telegram API
+    // 3. ПОТОМ создаём invoice с реальным orderId
+    const invoicePayload = { orderId: order.id };
+    console.log('💳 Creating Telegram invoice...');
+    console.log('📋 Invoice payload:', invoicePayload);
+    
     const response = await fetch(
       `https://api.telegram.org/bot${BOT_TOKEN}/createInvoiceLink`,
       {
@@ -70,7 +96,7 @@ router.post("/stars", async (req, res) => {
         body: JSON.stringify({
           title,
           description,
-          payload: JSON.stringify({ orderId: order.id }),
+          payload: JSON.stringify(invoicePayload),
           currency: "XTR",
           prices: [{ label: title, amount: Math.round(amount) }],
         }),
@@ -78,11 +104,22 @@ router.post("/stars", async (req, res) => {
     );
 
     const data = await response.json();
-    if (!data.ok) return res.status(400).json({ error: data.description });
+    console.log('📨 Telegram API response:', data);
+    
+    if (!data.ok) {
+      console.error('❌ Failed to create invoice:', data.description);
+      console.log('🗑️ Deleting order:', order.id);
+      await prisma.order.delete({ where: { id: order.id } });
+      return res.status(400).json({ error: data.description });
+    }
 
-    res.json({ invoice_url: data.result });
+    console.log('✅ Invoice created successfully:', data.result);
+    console.log('🎉 === STARS PAYMENT REQUEST COMPLETED ===\n');
+    
+    res.json({ invoice_url: data.result, orderId: order.id });
   } catch (err) {
-    console.error(err);
+    console.error('❌ Error in /stars endpoint:', err);
+    console.error('Stack trace:', err.stack);
     res.status(500).json({ error: "Ошибка при создании счёта" });
   }
 });
