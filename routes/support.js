@@ -1,7 +1,7 @@
 // routes/support.js
 import express from 'express';
 import axios from 'axios';
-import prisma from '../prisma/client.js';
+import prisma from '../prisma/prisma';
 
 const router = express.Router();
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
