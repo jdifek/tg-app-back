@@ -160,9 +160,14 @@ router.put('/products/:id', upload.single('image'), async (req, res) => {
   }
 });
 // ==================== CREATE BUNDLE ====================
+// ==================== CREATE BUNDLE ====================
 router.post(
   '/bundles',
-  upload.single('image'),
+  upload.fields([
+    { name: 'image', maxCount: 1 },        // главное фото
+    { name: 'images', maxCount: 10 },      // дополнительные фото
+    { name: 'videos', maxCount: 10 }       // видео
+  ]),
   [
     body('name').notEmpty().withMessage('Name is required'),
     body('price').isFloat({ min: 0 }).withMessage('Price must be a positive number'),
@@ -174,48 +179,90 @@ router.post(
         return res.status(400).json({ errors: errors.array() });
       }
 
-      const { name, price, description, photos, videos, exclusive } = req.body;
+      const { name, price, description, exclusive } = req.body;
+      let mainImageUrl = null;
+      const imageFiles = req.files?.images || [];
+      const videoFiles = req.files?.videos || [];
 
-      let imageUrl = null;
-
-      // Загружаем фото в Supabase
-      if (req.file) {
-        const fileExt = req.file.originalname.split('.').pop();
-        const fileName = `bundles/${Date.now()}-${Math.random().toString(36).substring(7)}.${fileExt}`;
+      // Загружаем главное фото
+      if (req.files?.image?.[0]) {
+        const file = req.files.image[0];
+        const fileExt = file.originalname.split('.').pop();
+        const fileName = `bundles/main-${Date.now()}-${Math.random().toString(36).substring(7)}.${fileExt}`;
 
         const { error: uploadError } = await supabase.storage
           .from(process.env.SUPABASE_BUCKET)
-          .upload(fileName, req.file.buffer, {
-            contentType: req.file.mimetype,
+          .upload(fileName, file.buffer, {
+            contentType: file.mimetype,
             upsert: false,
           });
 
         if (uploadError) {
           console.error('Supabase upload error:', uploadError);
-          return res.status(500).json({ error: 'Failed to upload image' });
+          return res.status(500).json({ error: 'Failed to upload main image' });
         }
 
         const { data: publicUrlData } = supabase.storage
           .from(process.env.SUPABASE_BUCKET)
           .getPublicUrl(fileName);
 
-        imageUrl = publicUrlData.publicUrl;
+        mainImageUrl = publicUrlData.publicUrl;
       }
 
-      // Создаём бандл
+      // Создаём сам бандл
       const bundle = await prisma.bundle.create({
         data: {
           name,
-          price: parseFloat(price),
           description,
-          photos: photos ? parseInt(photos) : 0,
-          videos: videos ? parseInt(videos) : 0,
+          price: parseFloat(price),
           exclusive: exclusive === 'true',
-          image: imageUrl,
+          image: mainImageUrl,
         },
       });
 
-      res.status(201).json(bundle);
+      // Загружаем дополнительные фото
+      for (const file of imageFiles) {
+        const ext = file.originalname.split('.').pop();
+        const fileName = `bundles/images/${Date.now()}-${Math.random().toString(36).substring(7)}.${ext}`;
+        const { error } = await supabase.storage
+          .from(process.env.SUPABASE_BUCKET)
+          .upload(fileName, file.buffer, { contentType: file.mimetype });
+        if (error) continue;
+
+        const { data: publicUrlData } = supabase.storage
+          .from(process.env.SUPABASE_BUCKET)
+          .getPublicUrl(fileName);
+
+        await prisma.bundleImage.create({
+          data: {
+            url: publicUrlData.publicUrl,
+            bundleId: bundle.id,
+          },
+        });
+      }
+
+      // Загружаем видео
+      for (const file of videoFiles) {
+        const ext = file.originalname.split('.').pop();
+        const fileName = `bundles/videos/${Date.now()}-${Math.random().toString(36).substring(7)}.${ext}`;
+        const { error } = await supabase.storage
+          .from(process.env.SUPABASE_BUCKET)
+          .upload(fileName, file.buffer, { contentType: file.mimetype });
+        if (error) continue;
+
+        const { data: publicUrlData } = supabase.storage
+          .from(process.env.SUPABASE_BUCKET)
+          .getPublicUrl(fileName);
+
+        await prisma.bundleVideo.create({
+          data: {
+            url: publicUrlData.publicUrl,
+            bundleId: bundle.id,
+          },
+        });
+      }
+
+      res.status(201).json({ success: true, bundleId: bundle.id });
     } catch (error) {
       console.error('Error creating bundle:', error);
       res.status(500).json({ error: 'Failed to create bundle' });
@@ -224,58 +271,148 @@ router.post(
 );
 
 // ==================== UPDATE BUNDLE ====================
-router.put('/bundles/:id', upload.single('image'), async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { name, price, description, photos, videos, exclusive } = req.body;
+router.put(
+  '/bundles/:id',
+  upload.fields([
+    { name: 'image', maxCount: 1 },
+    { name: 'images', maxCount: 10 },
+    { name: 'videos', maxCount: 10 },
+  ]),
+  async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { name, price, description, exclusive, imagesToDelete, videosToDelete } = req.body;
 
-    let imageUrl = undefined;
+      let mainImageUrl = undefined;
+      const imageFiles = req.files?.images || [];
+      const videoFiles = req.files?.videos || [];
 
-    // Если новое фото загружено — обновляем в Supabase
-    if (req.file) {
-      const fileExt = req.file.originalname.split('.').pop();
-      const fileName = `bundles/${Date.now()}-${Math.random().toString(36).substring(7)}.${fileExt}`;
+      // Парсим массивы ID для удаления
+      const imagesToDeleteArray = imagesToDelete ? JSON.parse(imagesToDelete) : [];
+      const videosToDeleteArray = videosToDelete ? JSON.parse(videosToDelete) : [];
 
-      const { error: uploadError } = await supabase.storage
-        .from(process.env.SUPABASE_BUCKET)
-        .upload(fileName, req.file.buffer, {
-          contentType: req.file.mimetype,
-          upsert: false,
+      // Удаляем изображения
+      if (imagesToDeleteArray.length > 0) {
+        // Получаем URL файлов перед удалением из БД
+        const imagesToRemove = await prisma.bundleImage.findMany({
+          where: { id: { in: imagesToDeleteArray } },
         });
 
-      if (uploadError) {
-        console.error('Supabase upload error:', uploadError);
-        return res.status(500).json({ error: 'Failed to upload new image' });
+        // Удаляем файлы из Supabase Storage
+        for (const img of imagesToRemove) {
+          const filePath = img.url.split('/').slice(-2).join('/'); // извлекаем путь типа "bundles/images/filename.jpg"
+          await supabase.storage
+            .from(process.env.SUPABASE_BUCKET)
+            .remove([filePath]);
+        }
+
+        // Удаляем записи из БД
+        await prisma.bundleImage.deleteMany({
+          where: { id: { in: imagesToDeleteArray } },
+        });
       }
 
-      const { data: publicUrlData } = supabase.storage
-        .from(process.env.SUPABASE_BUCKET)
-        .getPublicUrl(fileName);
+      // Удаляем видео
+      if (videosToDeleteArray.length > 0) {
+        // Получаем URL файлов перед удалением из БД
+        const videosToRemove = await prisma.bundleVideo.findMany({
+          where: { id: { in: videosToDeleteArray } },
+        });
 
-      imageUrl = publicUrlData.publicUrl;
+        // Удаляем файлы из Supabase Storage
+        for (const vid of videosToRemove) {
+          const filePath = vid.url.split('/').slice(-2).join('/'); // извлекаем путь типа "bundles/videos/filename.mp4"
+          await supabase.storage
+            .from(process.env.SUPABASE_BUCKET)
+            .remove([filePath]);
+        }
+
+        // Удаляем записи из БД
+        await prisma.bundleVideo.deleteMany({
+          where: { id: { in: videosToDeleteArray } },
+        });
+      }
+
+      // Если пришло новое главное фото
+      if (req.files?.image?.[0]) {
+        const file = req.files.image[0];
+        const fileExt = file.originalname.split('.').pop();
+        const fileName = `bundles/main-${Date.now()}-${Math.random().toString(36).substring(7)}.${fileExt}`;
+        const { error } = await supabase.storage
+          .from(process.env.SUPABASE_BUCKET)
+          .upload(fileName, file.buffer, {
+            contentType: file.mimetype,
+            upsert: false,
+          });
+        if (!error) {
+          const { data: publicUrlData } = supabase.storage
+            .from(process.env.SUPABASE_BUCKET)
+            .getPublicUrl(fileName);
+          mainImageUrl = publicUrlData.publicUrl;
+        }
+      }
+
+      // Обновляем сам бандл
+      const updatedBundle = await prisma.bundle.update({
+        where: { id },
+        data: {
+          name,
+          description,
+          price: price ? parseFloat(price) : undefined,
+          exclusive: exclusive === 'true',
+          ...(mainImageUrl && { image: mainImageUrl }), // обновляем только если есть новое фото
+        },
+      });
+
+      // Добавляем новые изображения
+      for (const file of imageFiles) {
+        const ext = file.originalname.split('.').pop();
+        const fileName = `bundles/images/${Date.now()}-${Math.random().toString(36).substring(7)}.${ext}`;
+        const { error } = await supabase.storage
+          .from(process.env.SUPABASE_BUCKET)
+          .upload(fileName, file.buffer, { contentType: file.mimetype });
+        if (error) continue;
+
+        const { data: publicUrlData } = supabase.storage
+          .from(process.env.SUPABASE_BUCKET)
+          .getPublicUrl(fileName);
+
+        await prisma.bundleImage.create({
+          data: {
+            url: publicUrlData.publicUrl,
+            bundleId: updatedBundle.id,
+          },
+        });
+      }
+
+      // Добавляем новые видео
+      for (const file of videoFiles) {
+        const ext = file.originalname.split('.').pop();
+        const fileName = `bundles/videos/${Date.now()}-${Math.random().toString(36).substring(7)}.${ext}`;
+        const { error } = await supabase.storage
+          .from(process.env.SUPABASE_BUCKET)
+          .upload(fileName, file.buffer, { contentType: file.mimetype });
+        if (error) continue;
+
+        const { data: publicUrlData } = supabase.storage
+          .from(process.env.SUPABASE_BUCKET)
+          .getPublicUrl(fileName);
+
+        await prisma.bundleVideo.create({
+          data: {
+            url: publicUrlData.publicUrl,
+            bundleId: updatedBundle.id,
+          },
+        });
+      }
+
+      res.json(updatedBundle);
+    } catch (error) {
+      console.error('Error updating bundle:', error);
+      res.status(500).json({ error: 'Failed to update bundle' });
     }
-
-    // Обновляем бандл
-    const updatedBundle = await prisma.bundle.update({
-      where: { id },
-      data: {
-        name,
-        price: price ? parseFloat(price) : undefined,
-        description,
-        photos: photos ? parseInt(photos) : 0,
-        videos: videos ? parseInt(videos) : 0,
-        exclusive: exclusive === 'true',
-        image: imageUrl,
-      },
-    });
-
-    res.json(updatedBundle);
-  } catch (error) {
-    console.error('Error updating bundle:', error);
-    res.status(500).json({ error: 'Failed to update bundle' });
   }
-});
-
+);
 
 // DELETE /api/admin/products/:id - удалить продукт
 router.delete('/products/:id', async (req, res) => {

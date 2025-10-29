@@ -9,6 +9,7 @@ router.get('/', async (req, res) => {
   try {
     const bundles = await prisma.bundle.findMany({
       where: { isActive: true },
+      include: { images: true, videos: true },
       orderBy: { createdAt: 'desc' }
     });
     res.json(bundles);
@@ -23,13 +24,14 @@ router.get('/:id', async (req, res) => {
   try {
     const { id } = req.params;
     const bundle = await prisma.bundle.findUnique({
-      where: { id }
+      where: { id }, include: { images: true, videos: true },
+
     });
-    
+
     if (!bundle) {
       return res.status(404).json({ error: 'Bundle not found' });
     }
-    
+
     res.json(bundle);
   } catch (error) {
     console.error('Error fetching bundle:', error);

@@ -32,15 +32,33 @@ enum PaymentStatus {
 
 // ---------- MODELS ----------
 
+model SupportMessage {
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [telegramId])
+  orderId     String? // Опционально, если связано с заказом
+  message     String   @db.Text
+  mediaUrl    String? // Для фото/видео
+  mediaType   String? // photo, video, document
+  isFromAdmin Boolean  @default(false)
+  isRead      Boolean  @default(false)
+  createdAt   DateTime @default(now())
+
+  @@index([userId])
+  @@index([createdAt])
+}
+
 model User {
-  id         String   @id @default(cuid())
-  telegramId String   @unique
-  username   String?
-  firstName  String?
-  lastName   String?
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
-  orders     Order[]
+  id               String           @id @default(cuid())
+  telegramId       String           @unique
+  username         String?
+  firstName        String?
+  lastName         String?
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+  supportMessages  SupportMessage[]
+  hasUnreadSupport Boolean          @default(false)
+  orders           Order[]
 
   @@map("users")
 }
@@ -60,20 +78,34 @@ model Product {
 }
 
 model Bundle {
-  id          String      @id @default(cuid())
+  id          String        @id @default(cuid())
   name        String
   description String?
   price       Float
-  image       String?
-  photos      Int         @default(0)
-  videos      Int         @default(0)
-  exclusive   Boolean     @default(false)
-  isActive    Boolean     @default(true)
-  createdAt   DateTime    @default(now())
-  updatedAt   DateTime    @updatedAt
+  image       String? // главная картинка (необязательно)
+  exclusive   Boolean       @default(false)
+  isActive    Boolean       @default(true)
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
   orderItems  OrderItem[]
+  images      BundleImage[] // список может быть пустым
+  videos      BundleVideo[] // список может быть пустым
 
   @@map("bundles")
+}
+
+model BundleImage {
+  id       String  @id @default(cuid())
+  url      String
+  bundle   Bundle? @relation(fields: [bundleId], references: [id])
+  bundleId String?
+}
+
+model BundleVideo {
+  id       String  @id @default(cuid())
+  url      String
+  bundle   Bundle? @relation(fields: [bundleId], references: [id])
+  bundleId String?
 }
 
 enum OrderType {
@@ -89,7 +121,7 @@ model Order {
   id            String        @id @default(cuid())
   user          User          @relation(fields: [userId], references: [id])
   userId        String
-  telegramId        String?
+  telegramId    String?
   orderType     OrderType
   status        OrderStatus   @default(PENDING)
   paymentMethod PaymentMethod @default(MANUAL)
@@ -101,8 +133,8 @@ model Order {
   address       String?
   city          String?
   zipCode       String?
-  screenshot    String?   
-  rating    String?   
+  screenshot    String?
+  rating        String?
   country       String?
   createdAt     DateTime      @default(now())
   updatedAt     DateTime      @updatedAt
@@ -137,6 +169,12 @@ model WishlistItem {
   updatedAt   DateTime @updatedAt
 
   @@map("wishlist_items")
+}
+
+model Payments {
+  id     String @id @default(cuid())
+  USDT   String @default("TQx9vF3s1GJH2A7xXp6f5rN8W4tK9mE8nP3")
+  PayPal String @default("@TashaMendi")
 }
 
 enum OrderStatus {

@@ -355,30 +355,117 @@ router.patch('/:id', upload.single('screenshot'), async (req, res) => {
 });
 
 // PATCH /api/orders/:id/payment-status - Update payment status
+// PATCH /api/orders/:id/payment-status - Update payment status (admin/manual)
 router.patch('/:id/payment-status', [
-  body('paymentStatus').isIn(['PENDING', 'AWAITING_CHECK', 'CONFIRMED', 'FAILED'])
+  body('paymentStatus')
+    .isIn(['PENDING', 'AWAITING_CHECK', 'CONFIRMED', 'FAILED'])
     .withMessage('Invalid payment status'),
 ], async (req, res) => {
   try {
     const { id } = req.params;
     const { paymentStatus } = req.body;
 
-    const order = await prisma.order.update({
+    const updatedOrder = await prisma.order.update({
       where: { id },
       data: { paymentStatus, updatedAt: new Date() },
       include: {
+        user: true,
         orderItems: {
-          include: { product: true, bundle: true },
+          include: {
+            product: true,
+            bundle: {
+              include: {
+                images: true,
+                videos: true,
+              },
+            },
+          },
         },
       },
     });
 
-    res.json(order);
+    console.log(`🧾 Payment status for order #${id} updated to ${paymentStatus}`);
+
+    // --- If admin confirms payment manually, send content via Telegram ---
+    if (paymentStatus === 'CONFIRMED' && updatedOrder.user?.telegramId) {
+      const userId = updatedOrder.user.telegramId;
+
+      try {
+        // Notify user
+        await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+          chat_id: userId,
+          text: `✅ Your payment for order #${id} has been confirmed!\n\n🎉 Thank you for your purchase!`,
+        });
+
+        // Send order content
+        for (const item of updatedOrder.orderItems) {
+          if (item.product) {
+            await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendPhoto`, {
+              chat_id: userId,
+              photo: item.product.image,
+              caption: `📦 ${item.product.name}\n💰 Price: ${item.product.price} USD\n\n${item.product.description || ''}`,
+            });
+          } else if (item.bundle) {
+            if (item.bundle.image) {
+              await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendPhoto`, {
+                chat_id: userId,
+                photo: item.bundle.image,
+                caption: `🎁 ${item.bundle.name}\n💰 Price: ${item.bundle.price} USD\n\n${item.bundle.description || ''}`,
+              });
+            }
+
+            for (const img of item.bundle.images || []) {
+              await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendPhoto`, {
+                chat_id: userId,
+                photo: img.url,
+              });
+            }
+
+            for (const vid of item.bundle.videos || []) {
+              await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendVideo`, {
+                chat_id: userId,
+                video: vid.url,
+              });
+            }
+          }
+        }
+
+        // Handle special order types
+        if (updatedOrder.orderType === 'CUSTOM_VIDEO') {
+          await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+            chat_id: userId,
+            text: `📹 Your personalized video will be ready soon! We’ll notify you once it’s completed.`,
+          });
+        } else if (updatedOrder.orderType === 'VIDEO_CALL') {
+          await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+            chat_id: userId,
+            text: `📞 Thank you! Our manager will contact you soon to schedule your video call.`,
+          });
+        } else if (updatedOrder.orderType === 'VIP') {
+          await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+            chat_id: userId,
+            text: `👑 You are now a VIP client! Access exclusive materials here: https://t.me/your_vip_channel`,
+          });
+        } else if (updatedOrder.orderType === 'RATING') {
+          await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+            chat_id: userId,
+            text: `⭐ Thank you for your support! Your rating has been successfully recorded.`,
+          });
+        }
+
+        console.log(`✅ Content successfully delivered to user ${userId}`);
+      } catch (err) {
+        console.error('❌ Error sending content to user:', err.response?.data || err.message);
+      }
+    }
+
+    res.json(updatedOrder);
   } catch (error) {
     console.error('Error updating payment status:', error);
     res.status(500).json({ error: 'Failed to update payment status' });
   }
 });
+
 
 // PATCH /api/orders/:id/status - Update order status
 router.patch('/:id/status', async (req, res) => {
@@ -518,51 +605,136 @@ router.post('/telegram-payment-webhook', async (req, res) => {
 
     // Handle successful payment
     if (update.message?.successful_payment) {
-      const { invoice_payload, total_amount, telegram_payment_charge_id } = 
+      const { invoice_payload, total_amount, telegram_payment_charge_id } =
         update.message.successful_payment;
-
+    
       console.log('💰 Successful payment received!');
       console.log('Payload:', invoice_payload);
       console.log('Amount:', total_amount, 'stars');
-
+    
       try {
         const payload = JSON.parse(invoice_payload);
         const { orderId } = payload;
-
+    
         if (orderId) {
-          // Update order status
+          // Update order status in database
           const updatedOrder = await prisma.order.update({
             where: { id: orderId },
             data: {
               paymentStatus: 'CONFIRMED',
               status: 'PROCESSING',
-              screenshot: telegram_payment_charge_id, // Save payment charge ID
+              screenshot: telegram_payment_charge_id, // Save Telegram charge ID
               updatedAt: new Date(),
             },
+            include: {
+              orderItems: {
+                include: {
+                  product: true,
+                  bundle: {
+                    include: {
+                      images: true,
+                      videos: true,
+                    },
+                  },
+                },
+              },
+            },
           });
-
+    
           console.log('✅ Order updated:', orderId);
-
-          // Notify user
+    
           const userId = update.message.from.id;
-          await axios.post(
-            `https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`,
-            {
-              chat_id: userId,
-              text: `✅ Payment confirmed!\n\n💫 Order #${orderId}\n💰 Amount: ${total_amount} Stars\n\n🎉 Thank you for your purchase!`,
-              parse_mode: 'HTML',
-            }
-          );
-
+    
+          // Notify user about successful payment
+          await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+            chat_id: userId,
+            text: `✅ Payment confirmed!\n\n💫 Order #${orderId}\n💰 Amount: ${total_amount} Stars\n\n🎉 Thank you for your purchase!`,
+            parse_mode: 'HTML',
+          });
+    
           // Notify admins
           await notifyAdmins(updatedOrder, update.message.from.username);
+    
+          // --- Send content to user after payment confirmation ---
+          try {
+            await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+              chat_id: userId,
+              text: `🎉 Thank you for your payment!\nYour order #${orderId} has been confirmed ✅`,
+            });
+    
+            // Send purchased products or bundles
+            for (const item of updatedOrder.orderItems) {
+              if (item.product) {
+                // Send single product
+                await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendPhoto`, {
+                  chat_id: userId,
+                  photo: item.product.image,
+                  caption: `📦 ${item.product.name}\n💰 Price: ${item.product.price} USD\n\n${item.product.description || ''}`,
+                });
+              } else if (item.bundle) {
+                // Send main bundle image
+                if (item.bundle.image) {
+                  await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendPhoto`, {
+                    chat_id: userId,
+                    photo: item.bundle.image,
+                    caption: `🎁 ${item.bundle.name}\n💰 Price: ${item.bundle.price} USD\n\n${item.bundle.description || ''}`,
+                  });
+                }
+    
+                // Send all additional images
+                for (const img of item.bundle.images || []) {
+                  await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendPhoto`, {
+                    chat_id: userId,
+                    photo: img.url,
+                  });
+                }
+    
+                // Send all videos
+                for (const vid of item.bundle.videos || []) {
+                  await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendVideo`, {
+                    chat_id: userId,
+                    video: vid.url,
+                  });
+                }
+              }
+            }
+    
+            // Handle special order types
+            if (updatedOrder.orderType === 'CUSTOM_VIDEO') {
+              await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+                chat_id: userId,
+                text: `📹 Your personalized video will be ready soon! We’ll notify you once it’s completed.`,
+              });
+            } else if (updatedOrder.orderType === 'VIDEO_CALL') {
+              await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+                chat_id: userId,
+                text: `📞 Thank you! Our manager will contact you soon to schedule your video call.`,
+              });
+            } else if (updatedOrder.orderType === 'VIP') {
+              await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+                chat_id: userId,
+                text: `👑 You are now a VIP client! Access exclusive materials here: https://t.me/your_vip_channel`,
+              });
+            } else if (updatedOrder.orderType === 'RATING') {
+              await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+                chat_id: userId,
+                text: `⭐ Thank you for your support! Your rating has been successfully recorded.`,
+              });
+            }
+    
+            console.log(`✅ Content successfully delivered to user ${userId}`);
+          } catch (err) {
+            console.error(
+              '❌ Error sending content to user:',
+              err.response?.data || err.message
+            );
+          }
         }
       } catch (err) {
         console.error('❌ Error processing payment:', err);
       }
-
-      return res.sendStatus(200);
     }
+    
 
     res.sendStatus(200);
   } catch (err) {

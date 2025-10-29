@@ -5,6 +5,7 @@ const cors = require('cors');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const { PrismaClient } = require('@prisma/client');
+const { initBot } = require('./telegram/bot');
 
 require('dotenv').config();
 
@@ -26,6 +27,7 @@ const limiter = rateLimit({
   max: 100 // limit each IP to 100 requests per windowMs
 });
 app.use(limiter);
+initBot();
 // Webhook for Telegram payment notifications
 app.post('/webhook/telegram', async (req, res) => {
   console.log('\n🔔 === TELEGRAM WEBHOOK RECEIVED ===');
