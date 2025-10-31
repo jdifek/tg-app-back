@@ -1,8 +1,11 @@
 
 // server.js
 const express = require('express');
+const path = require('path');
+
 const cors = require('cors');
 const helmet = require('helmet');
+const uploadRoutes = require('./routes/upload');
 const rateLimit = require('express-rate-limit');
 const { PrismaClient } = require('@prisma/client');
 const { initBot } = require('./telegram/bot');
@@ -13,7 +16,7 @@ const app = express();
 const prisma = new PrismaClient();
 
 const PORT = process.env.PORT || 3001;
-app.set('trust proxy', 1); 
+app.set('trust proxy', 1);
 // Middleware
 app.use(helmet());
 app.use(cors());
@@ -28,14 +31,17 @@ const limiter = rateLimit({
 });
 app.use(limiter);
 initBot();
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+app.use('/api/upload', uploadRoutes);
+
 // Webhook for Telegram payment notifications
 app.post('/webhook/telegram', async (req, res) => {
   console.log('\n🔔 === TELEGRAM WEBHOOK RECEIVED ===');
   console.log('📥 Full request body:', JSON.stringify(req.body, null, 2));
-  
+
   try {
     const { pre_checkout_query, message, update_id } = req.body;
-    
+
     console.log('🆔 Update ID:', update_id);
     console.log('📋 Has message:', !!message);
     console.log('📋 Has pre_checkout_query:', !!pre_checkout_query);
@@ -43,7 +49,7 @@ app.post('/webhook/telegram', async (req, res) => {
     // ✅ SUCCESSFUL_PAYMENT ПРИХОДИТ ВНУТРИ MESSAGE
     if (message?.successful_payment) {
       console.log('💰 === SUCCESSFUL PAYMENT DETECTED ===');
-      
+
       const payment = message.successful_payment;
       console.log('💳 Payment details:');
       console.log('  - Currency:', payment.currency);
@@ -51,7 +57,7 @@ app.post('/webhook/telegram', async (req, res) => {
       console.log('  - Invoice payload:', payment.invoice_payload);
       console.log('  - Telegram payment charge ID:', payment.telegram_payment_charge_id);
       console.log('  - Provider payment charge ID:', payment.provider_payment_charge_id);
-      
+
       const { invoice_payload } = payment;
 
       // Парсим orderId из payload
@@ -60,7 +66,7 @@ app.post('/webhook/telegram', async (req, res) => {
         const parsed = JSON.parse(invoice_payload);
         orderId = parsed.orderId;
         console.log('🆔 Extracted orderId from payload:', orderId);
-        
+
         if (!orderId) {
           console.error('❌ orderId is missing in payload');
           return res.sendStatus(400);
@@ -82,7 +88,7 @@ app.post('/webhook/telegram', async (req, res) => {
 
       if (!existingOrder) {
         console.error(`❌ Order ${orderId} NOT FOUND in database!`);
-        
+
         // Показываем последние заказы для отладки
         const recentOrders = await prisma.order.findMany({
           take: 5,
@@ -100,7 +106,7 @@ app.post('/webhook/telegram', async (req, res) => {
         recentOrders.forEach(order => {
           console.log(`  - ID: ${order.id}, Type: ${order.orderType}, Status: ${order.paymentStatus}, Amount: ${order.totalAmount}`);
         });
-        
+
         return res.sendStatus(404);
       }
 
@@ -127,7 +133,7 @@ app.post('/webhook/telegram', async (req, res) => {
       console.log('  - New status:', updatedOrder.status);
       console.log('  - New payment status:', updatedOrder.paymentStatus);
       console.log('🎉 === PAYMENT PROCESSING COMPLETED ===\n');
-      
+
       return res.sendStatus(200);
     }
 
@@ -147,12 +153,12 @@ app.post('/webhook/telegram', async (req, res) => {
       console.log('  - Currency:', pre_checkout_query.currency);
       console.log('  - Total amount:', pre_checkout_query.total_amount);
       console.log('  - Invoice payload:', pre_checkout_query.invoice_payload);
-      
+
       // Валидация payload
       try {
         const parsed = JSON.parse(pre_checkout_query.invoice_payload);
         console.log('  - Parsed payload:', parsed);
-        
+
         if (!parsed.orderId) {
           console.error('❌ orderId missing in pre-checkout payload');
           await fetch(
@@ -172,7 +178,7 @@ app.post('/webhook/telegram', async (req, res) => {
       } catch (err) {
         console.error('❌ Invalid JSON in pre-checkout payload');
       }
-      
+
       // Отвечаем Telegram, что всё ок
       const answerResponse = await fetch(
         `https://api.telegram.org/bot${BOT_TOKEN}/answerPreCheckoutQuery`,
@@ -199,11 +205,11 @@ app.post('/webhook/telegram', async (req, res) => {
     console.error('Error name:', err.name);
     console.error('Error message:', err.message);
     console.error('Error code:', err.code);
-    
+
     if (err.meta) {
       console.error('Prisma meta:', JSON.stringify(err.meta, null, 2));
     }
-    
+
     console.error('Stack trace:', err.stack);
     console.log('💥 === WEBHOOK PROCESSING FAILED ===\n');
     res.sendStatus(500);
@@ -212,7 +218,7 @@ app.post('/webhook/telegram', async (req, res) => {
 app.post('/setup-webhook', async (req, res) => {
   try {
     const webhookUrl = `${process.env.WEBHOOK_URL}/webhook/telegram`;
-    
+
     const response = await fetch(
       `https://api.telegram.org/bot${BOT_TOKEN}/setWebhook`,
       {
@@ -224,7 +230,7 @@ app.post('/setup-webhook', async (req, res) => {
         })
       }
     );
-    
+
     const data = await response.json();
     res.json(data);
   } catch (err) {
@@ -245,7 +251,7 @@ app.get('/webhook-info', async (req, res) => {
   }
 });
 // Routes
-app.use('/api/users', require('./routes/users')); 
+app.use('/api/users', require('./routes/users'));
 app.use('/api/products', require('./routes/products'));
 app.use('/api/bundles', require('./routes/bundles'));
 app.use('/api/orders', require('./routes/orders'));
@@ -253,6 +259,7 @@ app.use('/api/wishlist', require('./routes/wishlist'));
 app.use('/api/services', require('./routes/services'));
 app.use('/api/subscriptions', require('./routes/subscriptions'));
 app.use('/api/admin', require('./routes/admin'));
+app.use('/api/support', require('./routes/support'));
 
 
 // Error handling middleware

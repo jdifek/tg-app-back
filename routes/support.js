@@ -1,7 +1,7 @@
 // routes/support.js
-import express from 'express';
-import axios from 'axios';
-import prisma from '../prisma/prisma';
+const express = require('express');
+const axios = require('axios');
+const prisma = require('../prisma/prisma'); // путь без .js для CommonJS
 
 const router = express.Router();
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
@@ -231,4 +231,4 @@ router.patch('/mark-read/:userId', async (req, res) => {
   }
 });
 
-export default router;
+module.exports = router;
