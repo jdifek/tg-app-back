@@ -115,6 +115,7 @@ enum OrderType {
   CUSTOM_VIDEO
   VIDEO_CALL
   RATING
+  DONATION  
 }
 
 model Order {
@@ -131,6 +132,7 @@ model Order {
   lastName      String?
   username      String?
   address       String?
+  donationMessage String?
   city          String?
   zipCode       String?
   screenshot    String?
@@ -172,11 +174,12 @@ model WishlistItem {
 }
 
 model Payments {
-  id     String @id @default(cuid())
-  USDT   String @default("TQx9vF3s1GJH2A7xXp6f5rN8W4tK9mE8nP3")
-  PayPal String @default("@TashaMendi")
-}
+  id      Int    @id @default(1)
+  USDT    String @default("TQx9vF3s1GJH2A7xXp6f5rN8W4tK9mE8nP3")
+  PayPal  String @default("@TashaMendi")
 
+  @@map("payments")
+}
 enum OrderStatus {
   PENDING
   PROCESSING

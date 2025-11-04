@@ -15,14 +15,15 @@ const ADMIN_IDS = ['6970790362', '5505526221'];
 
 async function notifyAdmins(order, username) {
   const message = `
-📦 <b>New order created!</b>
-───────────────
-🆔 <b>Order ID:</b> ${order.id}
-👤 <b>User:</b> ${order.firstName}${username ? ` (@${username})` : ''} 
-📗 <b>Type:</b> ${order.orderType}
-💰 <b>Amount:</b> ${order.totalAmount} USD
-───────────────
-⚙️ Go to admin panel to process.
+  📦 <b>New order created!</b>
+  ───────────────
+  🆔 <b>Order ID:</b> ${order.id}
+  👤 <b>User:</b> ${order.firstName}${username ? ` (@${username})` : ''} 
+  📗 <b>Type:</b> ${order.orderType}
+  💰 <b>Amount:</b> ${order.totalAmount} USD
+  +${order.orderType === "DONATION" && order.donationMessage ? `💌 <b>Message:</b> ${order.donationMessage}` : ""}
+  ───────────────
+  ⚙️ Go to admin panel to process.
   `;
 
   for (const adminId of ADMIN_IDS) {
@@ -38,11 +39,26 @@ async function notifyAdmins(order, username) {
   }
 }
 
+router.get('/payments', async (req, res) => {
+  try {
+    const response = await prisma.payments.findUnique({ where: { id: 1 } })
+    res.status(200).json({
+      success: true,
+      payments: response
+    })
+  } catch (error) {
+    console.log(error);
+    res.status(500).json({
+      details: error.response?.data || error.message,
+    })
+  }
+})
+
 // POST /api/orders/stars - Create Stars invoice
 router.post("/stars", async (req, res) => {
-  const { title, description, amount, userId } = req.body;
+  const { title, description, amount, userId, orderType, donationMessage } = req.body;
 
-  console.log("📥 Stars payment request:", { title, description, amount, userId });
+  console.log("📥 Stars payment request:", { title, description, amount, userId, orderType, donationMessage });
 
   if (!userId) {
     return res.status(400).json({ error: "UserId is required" });
@@ -54,13 +70,13 @@ router.post("/stars", async (req, res) => {
 
   try {
     // Find or create user
-    let user = await prisma.user.findUnique({ 
-      where: { telegramId: String(userId) } 
+    let user = await prisma.user.findUnique({
+      where: { telegramId: String(userId) }
     });
-    
+
     if (!user) {
-      user = await prisma.user.create({ 
-        data: { telegramId: String(userId) } 
+      user = await prisma.user.create({
+        data: { telegramId: String(userId) }
       });
       console.log("✅ Created new user:", user.id);
     }
@@ -69,11 +85,12 @@ router.post("/stars", async (req, res) => {
     const order = await prisma.order.create({
       data: {
         userId: user.id,
-        orderType: "RATING",
+        orderType: orderType,
         paymentMethod: "STARS",
         totalAmount: amount / 100, // Convert stars to USD (approximate)
         status: "PENDING",
         paymentStatus: "PENDING",
+        donationMessage: donationMessage || null, // <-- Сохраняем сообщение, если есть
       },
     });
 
@@ -85,21 +102,19 @@ router.post("/stars", async (req, res) => {
       {
         title: title || "Order Payment",
         description: description || `Payment for order ${order.id}`,
-        payload: JSON.stringify({ orderId: order.id }), // Link to order ID
-        currency: "XTR", // Telegram Stars currency code
-        prices: [{ 
-          label: title || "Payment", 
-          amount: Math.round(amount) // Amount in stars (must be integer)
+        payload: JSON.stringify({ orderId: order.id }),
+        currency: "XTR",
+        prices: [{
+          label: title || "Payment",
+          amount: Math.round(amount)
         }],
       }
     );
 
-    console.log("📤 Telegram API response:", telegramResponse.data);
-
     if (!telegramResponse.data.ok) {
       console.error("❌ Telegram API error:", telegramResponse.data);
-      return res.status(400).json({ 
-        error: telegramResponse.data.description || "Failed to create invoice" 
+      return res.status(400).json({
+        error: telegramResponse.data.description || "Failed to create invoice"
       });
     }
 
@@ -109,15 +124,15 @@ router.post("/stars", async (req, res) => {
     // Update order with invoice URL
     await prisma.order.update({
       where: { id: order.id },
-      data: { 
-        screenshot: invoiceUrl, // Store invoice URL temporarily
+      data: {
+        screenshot: invoiceUrl,
         updatedAt: new Date()
       }
     });
 
-    const response = { 
+    const response = {
       invoice_url: invoiceUrl,
-      order_id: order.id 
+      order_id: order.id
     };
 
     console.log("📤 Sending response to client:", response);
@@ -126,14 +141,14 @@ router.post("/stars", async (req, res) => {
 
   } catch (err) {
     console.error("❌ Error creating Stars invoice:", err);
-    
+
     if (err.response) {
       console.error("Telegram API error details:", err.response.data);
     }
-    
-    res.status(500).json({ 
+
+    res.status(500).json({
       error: "Failed to create invoice",
-      details: err.message 
+      details: err.message
     });
   }
 });
@@ -141,11 +156,14 @@ router.post("/stars", async (req, res) => {
 // POST /api/orders - Create order
 router.post('/', [
   body('userId').notEmpty().withMessage('User ID is required'),
-  body('orderType').isIn(['PRODUCT', 'BUNDLE', 'VIP', 'CUSTOM_VIDEO', 'VIDEO_CALL', 'RATING']).withMessage('Invalid order type'),
+  body('orderType').isIn(['PRODUCT', 'BUNDLE', 'VIP', 'CUSTOM_VIDEO', 'VIDEO_CALL', 'RATING', 'DONATION']).withMessage('Invalid order type'),
 ], async (req, res) => {
   try {
+    console.log('🔍 Incoming order request:', req.body);
+
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
+      console.warn('⚠️ Validation errors:', errors.array());
       return res.status(400).json({ errors: errors.array() });
     }
 
@@ -161,8 +179,12 @@ router.post('/', [
       address,
       city,
       zipCode,
-      country
+      country,
+      donationMessage,
+      totalAmount: customAmount
     } = req.body;
+
+    console.log(`🧾 Processing order type: ${orderType}`);
 
     // Check user
     let user = await prisma.user.findUnique({
@@ -170,9 +192,12 @@ router.post('/', [
     });
 
     if (!user) {
+      console.log(`👤 User not found. Creating new user with ID: ${userId}`);
       user = await prisma.user.create({
         data: { id: userId, telegramId: telegramId }
       });
+    } else {
+      console.log(`👤 User found: ${user.username || 'No username'}`);
     }
 
     let totalAmount = 0;
@@ -180,18 +205,30 @@ router.post('/', [
 
     // Process different order types
     if (orderType === 'PRODUCT' || orderType === 'BUNDLE') {
-      for (const item of items || []) {
+      if (!items || items.length === 0) {
+        console.error('❌ No items provided for PRODUCT or BUNDLE order');
+        return res.status(400).json({ error: 'Items are required for PRODUCT or BUNDLE order' });
+      }
+
+      for (const item of items) {
+        console.log(`🔎 Processing item:`, item);
+
         if (item.type === 'product') {
           const product = await prisma.product.findUnique({
             where: { id: item.id }
           });
+
           if (product) {
-            totalAmount += product.price * (item.quantity || 1);
+            const quantity = item.quantity || 1;
+            totalAmount += product.price * quantity;
             orderItems.push({
               productId: product.id,
-              quantity: item.quantity || 1,
+              quantity,
               price: product.price
             });
+            console.log(`✅ Added product: ${product.name}, Quantity: ${quantity}, Subtotal: ${product.price * quantity}`);
+          } else {
+            console.warn(`⚠️ Product not found: ${item.id}`);
           }
         } else if (item.type === 'bundle') {
           const bundle = await prisma.bundle.findUnique({
@@ -204,17 +241,34 @@ router.post('/', [
               quantity: 1,
               price: bundle.price
             });
+            console.log(`✅ Added bundle: ${bundle.name}, Price: ${bundle.price}`);
+          } else {
+            console.warn(`⚠️ Bundle not found: ${item.id}`);
           }
         }
       }
     } else if (orderType === 'VIP') {
       totalAmount = 49.99;
+      console.log(`🎖️ VIP order, Price: ${totalAmount}`);
     } else if (orderType === 'CUSTOM_VIDEO') {
       totalAmount = 99.99;
+      console.log(`🎬 Custom video order, Price: ${totalAmount}`);
     } else if (orderType === 'VIDEO_CALL') {
       totalAmount = 149.99;
+      console.log(`📞 Video call order, Price: ${totalAmount}`);
     } else if (orderType === 'RATING') {
       totalAmount = 19.99;
+      console.log(`⭐ Rating order, Price: ${totalAmount}`);
+    }else if (orderType === 'DONATION') {
+      totalAmount = customAmount || (items?.[0]?.price ?? 0);
+      console.log(`💖 Donation order, Amount: ${totalAmount}`);
+    }
+
+    console.log(`💰 Total calculated amount: ${totalAmount}`);
+
+    if ((orderType === 'PRODUCT' || orderType === 'BUNDLE') && orderItems.length === 0) {
+      console.error('❌ No valid order items were created for PRODUCT or BUNDLE');
+      return res.status(400).json({ error: 'No valid items found for order' });
     }
 
     // Create order
@@ -230,11 +284,10 @@ router.post('/', [
         paymentMethod,
         username,
         city,
+        donationMessage,
         zipCode,
         country,
-        orderItems: {
-          create: orderItems
-        }
+        orderItems: orderItems.length > 0 ? { create: orderItems } : undefined
       },
       include: {
         orderItems: {
@@ -245,14 +298,16 @@ router.post('/', [
         }
       }
     });
-    
+
+    console.log(`✅ Order created successfully: ID ${order.id}`);
     await notifyAdmins(order, username);
     res.status(201).json(order);
   } catch (error) {
-    console.error('Error creating order:', error);
+    console.error('🔥 Error creating order:', error);
     res.status(500).json({ error: 'Failed to create order' });
   }
 });
+
 
 // PATCH /api/orders/:id-rating - Attach rating screenshot
 router.patch('/:id-rating', upload.single('rating'), async (req, res) => {
@@ -391,69 +446,85 @@ router.patch('/:id/payment-status', [
       const userId = updatedOrder.user.telegramId;
 
       try {
-        // Notify user
-        await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
-          chat_id: userId,
-          text: `✅ Your payment for order #${id} has been confirmed!\n\n🎉 Thank you for your purchase!`,
-        });
+        if (updatedOrder.orderType === 'DONATION') {
+          // 💖 Special handling for donations
+          let thankYouMessage = `🙏 Thank you so much for your donation of $${updatedOrder.totalAmount}! ❤️`;
 
-        // Send order content
-        for (const item of updatedOrder.orderItems) {
-          if (item.product) {
-            await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendPhoto`, {
-              chat_id: userId,
-              photo: item.product.image,
-              caption: `📦 ${item.product.name}\n💰 Price: ${item.product.price} USD\n\n${item.product.description || ''}`,
-            });
-          } else if (item.bundle) {
-            if (item.bundle.image) {
+          if (updatedOrder.donationMessage) {
+            thankYouMessage += `\n\n📩 Your message:\n"${updatedOrder.donationMessage}"`;
+          }
+
+          await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+            chat_id: userId,
+            text: thankYouMessage,
+          });
+
+          console.log(`✅ Donation thank-you message sent to user ${userId}`);
+        } else {
+          // Notify user
+          await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+            chat_id: userId,
+            text: `✅ Your payment for order #${id} has been confirmed!\n\n🎉 Thank you for your purchase!`,
+          });
+
+          // Send order content
+          for (const item of updatedOrder.orderItems) {
+            if (item.product) {
               await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendPhoto`, {
                 chat_id: userId,
-                photo: item.bundle.image,
-                caption: `🎁 ${item.bundle.name}\n💰 Price: ${item.bundle.price} USD\n\n${item.bundle.description || ''}`,
+                photo: item.product.image,
+                caption: `📦 ${item.product.name}\n💰 Price: ${item.product.price} USD\n\n${item.product.description || ''}`,
               });
-            }
+            } else if (item.bundle) {
+              if (item.bundle.image) {
+                await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendPhoto`, {
+                  chat_id: userId,
+                  photo: item.bundle.image,
+                  caption: `🎁 ${item.bundle.name}\n💰 Price: ${item.bundle.price} USD\n\n${item.bundle.description || ''}`,
+                });
+              }
 
-            for (const img of item.bundle.images || []) {
-              await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendPhoto`, {
-                chat_id: userId,
-                photo: img.url,
-              });
-            }
+              for (const img of item.bundle.images || []) {
+                await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendPhoto`, {
+                  chat_id: userId,
+                  photo: img.url,
+                });
+              }
 
-            for (const vid of item.bundle.videos || []) {
-              await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendVideo`, {
-                chat_id: userId,
-                video: vid.url,
-              });
+              for (const vid of item.bundle.videos || []) {
+                await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendVideo`, {
+                  chat_id: userId,
+                  video: vid.url,
+                });
+              }
             }
           }
-        }
 
-        // Handle special order types
-        if (updatedOrder.orderType === 'CUSTOM_VIDEO') {
-          await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
-            chat_id: userId,
-            text: `📹 Your personalized video will be ready soon! We’ll notify you once it’s completed.`,
-          });
-        } else if (updatedOrder.orderType === 'VIDEO_CALL') {
-          await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
-            chat_id: userId,
-            text: `📞 Thank you! Our manager will contact you soon to schedule your video call.`,
-          });
-        } else if (updatedOrder.orderType === 'VIP') {
-          await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
-            chat_id: userId,
-            text: `👑 You are now a VIP client! Access exclusive materials here: https://t.me/your_vip_channel`,
-          });
-        } else if (updatedOrder.orderType === 'RATING') {
-          await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
-            chat_id: userId,
-            text: `⭐ Thank you for your support! Your rating has been successfully recorded.`,
-          });
-        }
+          // Handle special order types
+          if (updatedOrder.orderType === 'CUSTOM_VIDEO') {
+            await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+              chat_id: userId,
+              text: `📹 Your personalized video will be ready soon! We’ll notify you once it’s completed.`,
+            });
+          } else if (updatedOrder.orderType === 'VIDEO_CALL') {
+            await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+              chat_id: userId,
+              text: `📞 Thank you! Our manager will contact you soon to schedule your video call.`,
+            });
+          } else if (updatedOrder.orderType === 'VIP') {
+            await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+              chat_id: userId,
+              text: `👑 You are now a VIP client! Access exclusive materials here: https://t.me/your_vip_channel`,
+            });
+          } else if (updatedOrder.orderType === 'RATING') {
+            await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+              chat_id: userId,
+              text: `⭐ Thank you for your support! Your rating has been successfully recorded.`,
+            });
+          }
 
-        console.log(`✅ Content successfully delivered to user ${userId}`);
+          console.log(`✅ Content successfully delivered to user ${userId}`);
+        }
       } catch (err) {
         console.error('❌ Error sending content to user:', err.response?.data || err.message);
       }
@@ -465,6 +536,7 @@ router.patch('/:id/payment-status', [
     res.status(500).json({ error: 'Failed to update payment status' });
   }
 });
+
 
 
 // PATCH /api/orders/:id/status - Update order status
@@ -588,9 +660,9 @@ router.post('/telegram-payment-webhook', async (req, res) => {
     // Handle pre_checkout_query (answer "OK" to allow payment)
     if (update.pre_checkout_query) {
       const { id, invoice_payload } = update.pre_checkout_query;
-      
+
       console.log('✅ Pre-checkout query received:', id);
-      
+
       // Answer pre-checkout query (required!)
       await axios.post(
         `https://api.telegram.org/bot${BOT_TOKEN}/answerPreCheckoutQuery`,
@@ -607,15 +679,15 @@ router.post('/telegram-payment-webhook', async (req, res) => {
     if (update.message?.successful_payment) {
       const { invoice_payload, total_amount, telegram_payment_charge_id } =
         update.message.successful_payment;
-    
+
       console.log('💰 Successful payment received!');
       console.log('Payload:', invoice_payload);
       console.log('Amount:', total_amount, 'stars');
-    
+
       try {
         const payload = JSON.parse(invoice_payload);
         const { orderId } = payload;
-    
+
         if (orderId) {
           // Update order status in database
           const updatedOrder = await prisma.order.update({
@@ -640,28 +712,28 @@ router.post('/telegram-payment-webhook', async (req, res) => {
               },
             },
           });
-    
+
           console.log('✅ Order updated:', orderId);
-    
+
           const userId = update.message.from.id;
-    
+
           // Notify user about successful payment
           await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
             chat_id: userId,
             text: `✅ Payment confirmed!\n\n💫 Order #${orderId}\n💰 Amount: ${total_amount} Stars\n\n🎉 Thank you for your purchase!`,
             parse_mode: 'HTML',
           });
-    
+
           // Notify admins
           await notifyAdmins(updatedOrder, update.message.from.username);
-    
+
           // --- Send content to user after payment confirmation ---
           try {
             await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
               chat_id: userId,
               text: `🎉 Thank you for your payment!\nYour order #${orderId} has been confirmed ✅`,
             });
-    
+
             // Send purchased products or bundles
             for (const item of updatedOrder.orderItems) {
               if (item.product) {
@@ -680,7 +752,7 @@ router.post('/telegram-payment-webhook', async (req, res) => {
                     caption: `🎁 ${item.bundle.name}\n💰 Price: ${item.bundle.price} USD\n\n${item.bundle.description || ''}`,
                   });
                 }
-    
+
                 // Send all additional images
                 for (const img of item.bundle.images || []) {
                   await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendPhoto`, {
@@ -688,7 +760,7 @@ router.post('/telegram-payment-webhook', async (req, res) => {
                     photo: img.url,
                   });
                 }
-    
+
                 // Send all videos
                 for (const vid of item.bundle.videos || []) {
                   await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendVideo`, {
@@ -698,7 +770,7 @@ router.post('/telegram-payment-webhook', async (req, res) => {
                 }
               }
             }
-    
+
             // Handle special order types
             if (updatedOrder.orderType === 'CUSTOM_VIDEO') {
               await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
@@ -721,7 +793,7 @@ router.post('/telegram-payment-webhook', async (req, res) => {
                 text: `⭐ Thank you for your support! Your rating has been successfully recorded.`,
               });
             }
-    
+
             console.log(`✅ Content successfully delivered to user ${userId}`);
           } catch (err) {
             console.error(
@@ -734,7 +806,7 @@ router.post('/telegram-payment-webhook', async (req, res) => {
         console.error('❌ Error processing payment:', err);
       }
     }
-    
+
 
     res.sendStatus(200);
   } catch (err) {

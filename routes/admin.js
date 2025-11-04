@@ -20,15 +20,15 @@ router.patch('/:id/payment-status', async (req, res) => {
     // Валидация статуса платежа
     const validPaymentStatuses = ['PENDING', 'AWAITING_CHECK', 'CONFIRMED', 'FAILED'];
     if (!validPaymentStatuses.includes(paymentStatus)) {
-      return res.status(400).json({ 
+      return res.status(400).json({
         error: 'Invalid payment status',
-        validStatuses: validPaymentStatuses 
+        validStatuses: validPaymentStatuses
       });
     }
 
     const updatedOrder = await prisma.order.update({
       where: { id },
-      data: { 
+      data: {
         paymentStatus,
         updatedAt: new Date()
       },
@@ -141,7 +141,7 @@ router.put('/products/:id', upload.single('image'), async (req, res) => {
       imageUrl = publicUrlData.publicUrl;
     }
 
-  
+
     // Обновляем продукт
     const updated = await prisma.product.update({
       where: { id },
@@ -559,6 +559,27 @@ router.post('/send-message', async (req, res) => {
     });
   }
 });
+
+
+router.patch('/change-payments', async (req, res, next) => {
+  const { usdt, paypal } = req.body
+  try {
+    const response = await prisma.payments.update({
+      where: { id: 1 },
+      data: {
+        USDT: usdt,
+        PayPal: paypal
+      }
+    })
+    res.json({ success: true, message: response });
+
+  } catch (error) {
+    console.log(error, 'error');
+    res.status(500).json({
+      details: error.response?.data || error.message,
+    });
+  }
+})
 // POST /api/admin/send-feedback
 router.post('/send-feedback', async (req, res) => {
   try {
@@ -575,7 +596,7 @@ router.post('/send-feedback', async (req, res) => {
       where: { telegramId: userId.toString() },
       select: { telegramId: true },
     });
-    
+
 
     if (!user || !user.telegramId) {
       return res.status(404).json({
