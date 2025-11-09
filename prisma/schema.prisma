@@ -115,32 +115,32 @@ enum OrderType {
   CUSTOM_VIDEO
   VIDEO_CALL
   RATING
-  DONATION  
+  DONATION
 }
 
 model Order {
-  id            String        @id @default(cuid())
-  user          User          @relation(fields: [userId], references: [id])
-  userId        String
-  telegramId    String?
-  orderType     OrderType
-  status        OrderStatus   @default(PENDING)
-  paymentMethod PaymentMethod @default(MANUAL)
-  paymentStatus PaymentStatus @default(PENDING)
-  totalAmount   Float
-  firstName     String?
-  lastName      String?
-  username      String?
-  address       String?
+  id              String        @id @default(cuid())
+  user            User          @relation(fields: [userId], references: [id])
+  userId          String
+  telegramId      String?
+  orderType       OrderType
+  status          OrderStatus   @default(PENDING)
+  paymentMethod   PaymentMethod @default(MANUAL)
+  paymentStatus   PaymentStatus @default(PENDING)
+  totalAmount     Float
+  firstName       String?
+  lastName        String?
+  username        String?
+  address         String?
   donationMessage String?
-  city          String?
-  zipCode       String?
-  screenshot    String?
-  rating        String?
-  country       String?
-  createdAt     DateTime      @default(now())
-  updatedAt     DateTime      @updatedAt
-  orderItems    OrderItem[]
+  city            String?
+  zipCode         String?
+  screenshot      String?
+  rating          String?
+  country         String?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+  orderItems      OrderItem[]
 
   @@map("orders")
 }
@@ -174,12 +174,20 @@ model WishlistItem {
 }
 
 model Payments {
-  id      Int    @id @default(1)
-  USDT    String @default("TQx9vF3s1GJH2A7xXp6f5rN8W4tK9mE8nP3")
-  PayPal  String @default("@TashaMendi")
+  id     Int    @id @default(1)
+  USDT   String @default("TQx9vF3s1GJH2A7xXp6f5rN8W4tK9mE8nP3")
+  PayPal String @default("@TashaMendi")
 
   @@map("payments")
 }
+
+model Girl {
+  id     Int    @id @default(1)
+  banner String  @default("https://images.unsplash.com/photo-1529626455594-4ff0802cfb7e?q=80&w=1200")
+  logo   String  @default("https://img.freepik.com/free-photo/attractive-positive-elegant-young-woman-cafe_23-2148071691.jpg?semt=ais_hybrid&w=740&q=80")
+  tgLink String @default("@wuzimu6")
+}
+
 enum OrderStatus {
   PENDING
   PROCESSING

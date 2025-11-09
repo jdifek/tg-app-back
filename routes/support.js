@@ -169,7 +169,7 @@ router.post('/send', async (req, res) => {
         `https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`,
         {
           chat_id: userId,
-          text: `💬 <b>Support Team:</b>\n\n${message}`,
+          text: `${message}`,
           parse_mode: 'HTML'
         }
       );
