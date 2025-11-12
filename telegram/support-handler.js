@@ -68,11 +68,6 @@ export async function handleUserMessage(msg) {
       data: { hasUnreadSupport: true }
     });
 
-    // Отправляем подтверждение пользователю
-    await sendMessage(chatId, 
-      '✅ Your message has been received! Our support team will respond shortly.'
-    );
-
     // Уведомляем админа
     await notifyAdmin(user, savedMessage);
 

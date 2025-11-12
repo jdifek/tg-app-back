@@ -173,14 +173,7 @@ async function handleUserMessage(msg) {
     }
 
     // Подтверждение пользователю
-    try {
-      await bot.sendMessage(chatId, 
-        '✅ Message received! Our support team will respond shortly.',
-        { parse_mode: 'HTML' }
-      );
-    } catch (confirmError) {
-      console.error('Error sending confirmation:', confirmError);
-    }
+   
 
     // Уведомляем админа
     try {

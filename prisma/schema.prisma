@@ -186,6 +186,8 @@ model Girl {
   banner String  @default("https://images.unsplash.com/photo-1529626455594-4ff0802cfb7e?q=80&w=1200")
   logo   String  @default("https://img.freepik.com/free-photo/attractive-positive-elegant-young-woman-cafe_23-2148071691.jpg?semt=ais_hybrid&w=740&q=80")
   tgLink String @default("@wuzimu6")
+  name String?
+  link String?
 }
 
 enum OrderStatus {
