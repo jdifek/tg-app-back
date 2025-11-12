@@ -41,7 +41,7 @@ router.patch('/', upload.fields([
   { name: 'logo', maxCount: 1 },
 ]), async (req, res) => {
   try {
-    const { tgLink } = req.body;
+    const { tgLink, name, link } = req.body;
     const files = req.files;
     let bannerUrl = null;
     let logoUrl = null;
@@ -103,6 +103,8 @@ router.patch('/', upload.fields([
         ...(bannerUrl && { banner: bannerUrl }),
         ...(logoUrl && { logo: logoUrl }),
         ...(tgLink && { tgLink }),
+        ...(name && { name }),
+        ...(link && { link }),
       },
     });
 
