@@ -7,13 +7,12 @@ const cors = require('cors');
 const helmet = require('helmet');
 const uploadRoutes = require('./routes/upload');
 const rateLimit = require('express-rate-limit');
-const { PrismaClient } = require('@prisma/client');
 const { initBot } = require('./telegram/bot');
+const prisma = require('./prisma/prisma');
 
 require('dotenv').config();
 
 const app = express();
-const prisma = new PrismaClient();
 
 const PORT = process.env.PORT || 3001;
 app.set('trust proxy', 1);
