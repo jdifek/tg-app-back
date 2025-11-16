@@ -21,7 +21,7 @@ async function notifyAdmins(order, username) {
   👤 <b>User:</b> ${order.firstName}${username ? ` (@${username})` : ''} 
   📗 <b>Type:</b> ${order.orderType}
   💰 <b>Amount:</b> ${order.totalAmount} USD
-  +${order.orderType === "DONATION" && order.donationMessage ? `💌 <b>Message:</b> ${order.donationMessage}` : ""}
+  ${order.orderType === "DONATION" && order.donationMessage ? `💌 <b>Message:</b> ${order.donationMessage}` : ""}
   ───────────────
   ⚙️ Go to admin panel to process.
   `;
