@@ -3,7 +3,7 @@ import axios from 'axios';
 import prisma from '../prisma/prisma.js';
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
-const ADMIN_CHAT_ID = 5505526221; // ID админа в Telegram
+const ADMIN_CHAT_ID = 6970790362; // ID админа в Telegram
 
 /**
  * Обработчик входящих сообщений от пользователей
