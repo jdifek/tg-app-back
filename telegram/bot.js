@@ -16,7 +16,7 @@ export function initBot() {
       return;
     }
 
-    bot = new TelegramBot(BOT_TOKEN, { polling: true });
+    bot = new TelegramBot(BOT_TOKEN, { polling: false });
     
     console.log('✅ Telegram bot started');
 
