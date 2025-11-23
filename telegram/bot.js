@@ -8,7 +8,7 @@ const ADMIN_CHAT_ID = 6970790362;
 
 let bot;
 
-// Инициализация бота
+// ✅ Инициализация бота БЕЗ polling (только webhook)
 export function initBot() {
   try {
     if (!BOT_TOKEN) {
@@ -16,28 +16,10 @@ export function initBot() {
       return;
     }
 
+    // 🔴 ВАЖНО: polling: false - работаем ТОЛЬКО с webhook
     bot = new TelegramBot(BOT_TOKEN, { polling: false });
     
-    console.log('✅ Telegram bot started');
-
-    // Команды
-    bot.onText(/\/start/, handleStart);
-    bot.onText(/\/support/, handleSupport);
-    
-    // Все остальные сообщения (не команды)
-    bot.on('message', async (msg) => {
-      try {
-        if (msg.text?.startsWith('/')) return; // Пропускаем команды
-        await handleUserMessage(msg);
-      } catch (error) {
-        console.error('Error in message handler:', error);
-      }
-    });
-
-    // Обработка ошибок
-    bot.on('polling_error', (error) => {
-      console.error('Telegram polling error:', error);
-    });
+    console.log('✅ Telegram bot initialized (webhook mode)');
 
     return bot;
   } catch (error) {
@@ -46,72 +28,25 @@ export function initBot() {
   }
 }
 
-// Команда /start
-async function handleStart(msg) {
-  const chatId = msg.chat.id;
-  
-  try {
-    const welcomeText = `
-👋 Welcome to our store!
-
-You can:
-• Browse products
-• Make purchases
-• Contact support at any time
-
-Just send a message here to reach our support team!
-    `.trim();
-
-    await bot.sendMessage(chatId, welcomeText, {
-      parse_mode: 'HTML'
-    });
-  } catch (error) {
-    console.error('Error in /start command:', error);
-    try {
-      await bot.sendMessage(chatId, '❌ Sorry, there was an error. Please try /start again.');
-    } catch (sendError) {
-      console.error('Error sending error message:', sendError);
-    }
-  }
-}
-
-// Команда /support
-async function handleSupport(msg) {
-  const chatId = msg.chat.id;
-  
-  try {
-    const helpText = `
-💬 <b>Support</b>
-
-Send any message or media to this chat:
-📝 Text messages
-📷 Photos
-🎥 Videos
-📄 Documents
-
-Our team typically responds within 24 hours.
-    `.trim();
-
-    await bot.sendMessage(chatId, helpText, {
-      parse_mode: 'HTML'
-    });
-  } catch (error) {
-    console.error('Error in /support command:', error);
-    try {
-      await bot.sendMessage(chatId, '❌ Sorry, there was an error. Please try /support again.');
-    } catch (sendError) {
-      console.error('Error sending error message:', sendError);
-    }
-  }
-}
-
-// Обработка обычных сообщений пользователей
-async function handleUserMessage(msg) {
+// ✅ Обработка обычных сообщений (вызывается из server.js webhook)
+export async function handleUserMessage(msg) {
   const chatId = msg.chat.id;
   const text = msg.text;
   const userId = chatId.toString();
 
   try {
+    console.log(`📨 Processing message from user ${userId}`);
+
+    // Пропускаем команды - они обрабатываются отдельно
+    if (text?.startsWith('/')) {
+      if (text === '/start') {
+        await handleStart(msg);
+      } else if (text === '/support') {
+        await handleSupport(msg);
+      }
+      return;
+    }
+
     // Создаем/обновляем пользователя
     const user = await prisma.user.upsert({
       where: { telegramId: userId },
@@ -128,6 +63,8 @@ async function handleUserMessage(msg) {
       }
     });
 
+    console.log(`✅ User upserted: ${user.telegramId}`);
+
     // Обрабатываем медиа
     let mediaUrl = null;
     let mediaType = null;
@@ -137,19 +74,22 @@ async function handleUserMessage(msg) {
         const photo = msg.photo[msg.photo.length - 1];
         mediaUrl = await getFileUrl(photo.file_id);
         mediaType = 'photo';
+        console.log(`📷 Photo processed: ${mediaUrl}`);
       } else if (msg.video) {
         mediaUrl = await getFileUrl(msg.video.file_id);
         mediaType = 'video';
+        console.log(`🎥 Video processed: ${mediaUrl}`);
       } else if (msg.document) {
         mediaUrl = await getFileUrl(msg.document.file_id);
         mediaType = 'document';
+        console.log(`📄 Document processed: ${mediaUrl}`);
       }
     } catch (mediaError) {
       console.error('Error processing media:', mediaError);
       // Продолжаем без медиа
     }
 
-    // Сохраняем сообщение
+    // Сохраняем сообщение в БД
     const savedMessage = await prisma.supportMessage.create({
       data: {
         userId: userId,
@@ -161,41 +101,107 @@ async function handleUserMessage(msg) {
       }
     });
 
+    console.log(`✅ Message saved: ${savedMessage.id}`);
+
     // Обновляем флаг непрочитанных
     try {
       await prisma.user.update({
         where: { telegramId: userId },
         data: { hasUnreadSupport: true }
       });
+      console.log(`✅ Unread flag updated`);
     } catch (updateError) {
       console.error('Error updating unread flag:', updateError);
-      // Не критично, продолжаем
     }
 
-    // Подтверждение пользователю
-   
+    // Отправляем подтверждение пользователю
+    try {
+      await sendTelegramMessage(chatId, '✅ Message received! Our team will respond soon.');
+      console.log(`✅ Confirmation sent to user ${userId}`);
+    } catch (confirmError) {
+      console.error('Error sending confirmation:', confirmError);
+    }
 
     // Уведомляем админа
     try {
       await notifyAdmin(user, savedMessage);
+      console.log(`✅ Admin notified`);
     } catch (notifyError) {
       console.error('Error notifying admin:', notifyError);
-      // Не блокируем работу, если не удалось уведомить админа
     }
 
   } catch (error) {
     console.error('Error handling user message:', error);
     try {
-      await bot.sendMessage(chatId, 
-        '❌ Sorry, there was an error. Please try again.'
-      );
+      await sendTelegramMessage(chatId, '❌ Sorry, there was an error. Please try again.');
     } catch (sendError) {
       console.error('Error sending error message:', sendError);
     }
   }
 }
 
-// Получить URL файла
+// ✅ Команда /start (вызывается из server.js webhook)
+export async function handleStart(msg) {
+  const chatId = msg.chat.id;
+  
+  try {
+    const welcomeText = `
+👋 Welcome to our store!
+
+You can:
+• Browse products
+• Make purchases
+• Contact support at any time
+
+Just send a message here to reach our support team!
+    `.trim();
+
+    await sendTelegramMessage(chatId, welcomeText, {
+      parse_mode: 'HTML'
+    });
+    console.log(`✅ /start command processed for user ${chatId}`);
+  } catch (error) {
+    console.error('Error in /start command:', error);
+    try {
+      await sendTelegramMessage(chatId, '❌ Sorry, there was an error. Please try /start again.');
+    } catch (sendError) {
+      console.error('Error sending error message:', sendError);
+    }
+  }
+}
+
+// ✅ Команда /support (вызывается из server.js webhook)
+export async function handleSupport(msg) {
+  const chatId = msg.chat.id;
+  
+  try {
+    const helpText = `
+💬 <b>Support</b>
+
+Send any message or media to this chat:
+📝 Text messages
+📷 Photos
+🎥 Videos
+📄 Documents
+
+Our team typically responds within 24 hours.
+    `.trim();
+
+    await sendTelegramMessage(chatId, helpText, {
+      parse_mode: 'HTML'
+    });
+    console.log(`✅ /support command processed for user ${chatId}`);
+  } catch (error) {
+    console.error('Error in /support command:', error);
+    try {
+      await sendTelegramMessage(chatId, '❌ Sorry, there was an error. Please try /support again.');
+    } catch (sendError) {
+      console.error('Error sending error message:', sendError);
+    }
+  }
+}
+
+// ✅ Получить URL файла
 async function getFileUrl(fileId) {
   try {
     const response = await axios.get(
@@ -216,7 +222,7 @@ async function getFileUrl(fileId) {
   }
 }
 
-// Уведомить админа
+// ✅ Уведомить админа о новом сообщении
 async function notifyAdmin(user, message) {
   if (!ADMIN_CHAT_ID) {
     console.warn('ADMIN_CHAT_ID not configured');
@@ -245,6 +251,7 @@ async function notifyAdmin(user, message) {
         const field = message.mediaType === 'photo' ? 'photo' : 
                       message.mediaType === 'video' ? 'video' : 'document';
 
+        // Используем axios вместо bot.sendPhoto для webhook режима
         await axios.post(
           `https://api.telegram.org/bot${BOT_TOKEN}/${method}`,
           {
@@ -254,20 +261,22 @@ async function notifyAdmin(user, message) {
             parse_mode: 'HTML'
           }
         );
+
+        console.log(`✅ Media sent to admin via ${method}`);
       } catch (mediaError) {
         console.error('Error sending media to admin, sending text instead:', mediaError);
         // Если не удалось отправить с медиа, отправляем просто текст
-        await bot.sendMessage(ADMIN_CHAT_ID, text, { parse_mode: 'HTML' });
+        await sendTelegramMessage(ADMIN_CHAT_ID, text, { parse_mode: 'HTML' });
       }
     } else {
-      await bot.sendMessage(ADMIN_CHAT_ID, text, { parse_mode: 'HTML' });
+      await sendTelegramMessage(ADMIN_CHAT_ID, text, { parse_mode: 'HTML' });
     }
   } catch (error) {
     console.error('Error notifying admin:', error);
   }
 }
 
-// Отправить сообщение (используется из API)
+// ✅ Отправить сообщение (используется везде)
 export async function sendTelegramMessage(chatId, text, options = {}) {
   try {
     if (!bot) {

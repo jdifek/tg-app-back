@@ -1,4 +1,3 @@
-
 // server.js
 const express = require('express');
 const path = require('path');
@@ -8,6 +7,7 @@ const helmet = require('helmet');
 const uploadRoutes = require('./routes/upload');
 const rateLimit = require('express-rate-limit');
 const { initBot } = require('./telegram/bot');
+const { handleUserMessage, handleStart, handleSupport } = require('./telegram/bot');
 const prisma = require('./prisma/prisma');
 
 require('dotenv').config();
@@ -16,6 +16,7 @@ const app = express();
 
 const PORT = process.env.PORT || 3001;
 app.set('trust proxy', 1);
+
 // Middleware
 app.use(helmet());
 app.use(cors());
@@ -28,9 +29,13 @@ const limiter = rateLimit({
   max: 100 // limit each IP to 100 requests per windowMs
 });
 app.use(limiter);
+
+// Инициализируем бота
 initBot();
+
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 app.use('/api/upload', uploadRoutes);
+
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const WEBHOOK_URL = process.env.WEBHOOK_URL;
 
@@ -78,18 +83,15 @@ async function setupWebhook() {
   }
 }
 
-// Webhook for Telegram payment notifications
-// server.js - ИСПРАВЛЕННЫЙ WEBHOOK
+// ✅ ГЛАВНЫЙ WEBHOOK ДЛЯ TELEGRAM
 app.post('/webhook/telegram', async (req, res) => {
   console.log('\n🔔 === TELEGRAM WEBHOOK RECEIVED ===');
-  console.log('📥 Full request body:', JSON.stringify(req.body, null, 2));
+  console.log('📥 Update ID:', req.body.update_id);
 
   try {
     const { pre_checkout_query, message, update_id } = req.body;
 
-    console.log('🆔 Update ID:', update_id);
-
-    // ✅ PRE-CHECKOUT QUERY
+    // ✅ PRE-CHECKOUT QUERY (платеж в ожидании)
     if (pre_checkout_query) {
       console.log('💳 === PRE-CHECKOUT QUERY ===');
       
@@ -131,9 +133,26 @@ app.post('/webhook/telegram', async (req, res) => {
       return res.sendStatus(200);
     }
 
-    // ✅ SUCCESSFUL PAYMENT
+    // ✅ ОБЫЧНЫЕ СООБЩЕНИЯ (текст, фото, видео, команды)
+    if (message) {
+      if (message.successful_payment) {
+        console.log('💰 === SUCCESSFUL PAYMENT DETECTED ===');
+        // Обработка платежа - см. ниже
+      } else if (message.text || message.photo || message.video || message.document) {
+        console.log('📨 === USER MESSAGE ===');
+        // ✅ Обрабатываем обычное сообщение
+        try {
+          await handleUserMessage(message);
+        } catch (err) {
+          console.error('❌ Error handling user message:', err);
+        }
+        return res.sendStatus(200);
+      }
+    }
+
+    // ✅ SUCCESSFUL PAYMENT (подтверждение платежа)
     if (message?.successful_payment) {
-      console.log('💰 === SUCCESSFUL PAYMENT DETECTED ===');
+      console.log('💰 === PROCESSING SUCCESSFUL PAYMENT ===');
 
       const payment = message.successful_payment;
       const { invoice_payload, total_amount, telegram_payment_charge_id } = payment;
@@ -334,6 +353,8 @@ app.post('/webhook/telegram', async (req, res) => {
     res.sendStatus(500);
   }
 });
+
+// Ручная установка webhook
 app.post('/setup-webhook', async (req, res) => {
   try {
     const webhookUrl = `${process.env.WEBHOOK_URL}/webhook/telegram`;
@@ -345,7 +366,7 @@ app.post('/setup-webhook', async (req, res) => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           url: webhookUrl,
-          allowed_updates: ['pre_checkout_query', 'message'] // ✅ Указываем типы
+          allowed_updates: ['pre_checkout_query', 'message']
         })
       }
     );
@@ -369,6 +390,7 @@ app.get('/webhook-info', async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+
 // Routes
 app.use('/api/users', require('./routes/users'));
 app.use('/api/products', require('./routes/products'));
@@ -380,7 +402,6 @@ app.use('/api/subscriptions', require('./routes/subscriptions'));
 app.use('/api/admin', require('./routes/admin'));
 app.use('/api/support', require('./routes/support'));
 app.use('/api/girl', require('./routes/girl'));
-
 
 // Error handling middleware
 app.use((err, req, res, next) => {
@@ -395,8 +416,8 @@ app.get('/health', (req, res) => {
 
 app.listen(PORT, () => {
   console.log(`Server is running on port ${PORT}`);
-    // Устанавливаем webhook после запуска сервера
-    setTimeout(() => {
-      setupWebhook();
-    }, 2000); // Ждём 2 секунды, чтобы сервер точно запустился
+  // Устанавливаем webhook после запуска сервера
+  setTimeout(() => {
+    setupWebhook();
+  }, 2000);
 });
