@@ -1,7 +1,7 @@
-// telegram/bot.js
-import TelegramBot from 'node-telegram-bot-api';
-import axios from 'axios';
-import prisma from '../prisma/prisma.js';
+// telegram/bot.js - ИСПРАВЛЕНО: CommonJS вместо ES6
+const TelegramBot = require('node-telegram-bot-api');
+const axios = require('axios');
+const prisma = require('../prisma/prisma');
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const ADMIN_CHAT_ID = 6970790362;
@@ -9,7 +9,7 @@ const ADMIN_CHAT_ID = 6970790362;
 let bot;
 
 // ✅ Инициализация бота БЕЗ polling (только webhook)
-export function initBot() {
+function initBot() {
   try {
     if (!BOT_TOKEN) {
       console.error('TELEGRAM_BOT_TOKEN not found in environment variables');
@@ -29,7 +29,7 @@ export function initBot() {
 }
 
 // ✅ Обработка обычных сообщений (вызывается из server.js webhook)
-export async function handleUserMessage(msg) {
+async function handleUserMessage(msg) {
   const chatId = msg.chat.id;
   const text = msg.text;
   const userId = chatId.toString();
@@ -141,7 +141,7 @@ export async function handleUserMessage(msg) {
 }
 
 // ✅ Команда /start (вызывается из server.js webhook)
-export async function handleStart(msg) {
+async function handleStart(msg) {
   const chatId = msg.chat.id;
   
   try {
@@ -171,7 +171,7 @@ Just send a message here to reach our support team!
 }
 
 // ✅ Команда /support (вызывается из server.js webhook)
-export async function handleSupport(msg) {
+async function handleSupport(msg) {
   const chatId = msg.chat.id;
   
   try {
@@ -277,7 +277,7 @@ async function notifyAdmin(user, message) {
 }
 
 // ✅ Отправить сообщение (используется везде)
-export async function sendTelegramMessage(chatId, text, options = {}) {
+async function sendTelegramMessage(chatId, text, options = {}) {
   try {
     if (!bot) {
       throw new Error('Bot not initialized');
@@ -289,6 +289,57 @@ export async function sendTelegramMessage(chatId, text, options = {}) {
   }
 }
 
-export function getBot() {
+function getBot() {
   return bot;
 }
+
+// CommonJS экспорт
+module.exports = {
+  initBot,
+  handleUserMessage,
+  handleStart,
+  handleSupport,
+  sendTelegramMessage,
+  getBot
+};
+
+// ✅ КРИТИЧЕСКИ ВАЖНО: Экспортируем функцию для отправки invoice
+async function sendStarsInvoice(chatId, orderId, title, description, amount) {
+  try {
+    if (!bot) {
+      throw new Error('Bot not initialized');
+    }
+
+    // Конвертируем USD в звезды (1 USD = 100 звезд примерно)
+    const starsAmount = Math.round(amount * 100);
+
+    console.log(`💫 Sending invoice to ${chatId}: ${starsAmount} stars for order ${orderId}`);
+
+    return await bot.sendInvoice(chatId, {
+      title: title,
+      description: description,
+      payload: JSON.stringify({ orderId }),
+      provider_token: '', // Пусто для Telegram Stars
+      currency: 'XTR', // ⚠️ КРИТИЧНО: XTR для Stars
+      prices: [
+        {
+          label: title,
+          amount: starsAmount
+        }
+      ]
+    });
+  } catch (error) {
+    console.error('Error sending invoice:', error);
+    throw error;
+  }
+}
+
+module.exports = {
+  initBot,
+  handleUserMessage,
+  handleStart,
+  handleSupport,
+  sendTelegramMessage,
+  sendStarsInvoice,
+  getBot
+};

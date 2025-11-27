@@ -1,19 +1,16 @@
-// server.js
+// server.js - ИСПРАВЛЕНО
 const express = require('express');
 const path = require('path');
-
 const cors = require('cors');
 const helmet = require('helmet');
 const uploadRoutes = require('./routes/upload');
 const rateLimit = require('express-rate-limit');
-const { initBot } = require('./telegram/bot');
-const { handleUserMessage, handleStart, handleSupport } = require('./telegram/bot');
+const { initBot, handleUserMessage } = require('./telegram/bot');
 const prisma = require('./prisma/prisma');
 
 require('dotenv').config();
 
 const app = express();
-
 const PORT = process.env.PORT || 3001;
 app.set('trust proxy', 1);
 
@@ -25,8 +22,8 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 // Rate limiting
 const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100 // limit each IP to 100 requests per windowMs
+  windowMs: 15 * 60 * 1000,
+  max: 100
 });
 app.use(limiter);
 
@@ -39,7 +36,7 @@ app.use('/api/upload', uploadRoutes);
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const WEBHOOK_URL = process.env.WEBHOOK_URL;
 
-// ✅ Автоматическая установка webhook при старте
+// ✅ Автоматическая установка webhook
 async function setupWebhook() {
   if (!WEBHOOK_URL) {
     console.log('⚠️ WEBHOOK_URL not set, skipping webhook setup');
@@ -48,9 +45,8 @@ async function setupWebhook() {
 
   try {
     const webhookUrl = `${WEBHOOK_URL}/webhook/telegram`;
-    
     console.log('🔧 Setting up webhook:', webhookUrl);
-    
+
     const response = await fetch(
       `https://api.telegram.org/bot${BOT_TOKEN}/setWebhook`,
       {
@@ -64,41 +60,42 @@ async function setupWebhook() {
     );
 
     const data = await response.json();
-    
+
     if (data.ok) {
       console.log('✅ Webhook set successfully:', webhookUrl);
     } else {
       console.error('❌ Failed to set webhook:', data);
     }
 
-    // Проверяем статус
     const infoResponse = await fetch(
       `https://api.telegram.org/bot${BOT_TOKEN}/getWebhookInfo`
     );
     const info = await infoResponse.json();
     console.log('📋 Webhook info:', JSON.stringify(info, null, 2));
-    
+
   } catch (err) {
     console.error('❌ Error setting up webhook:', err.message);
   }
 }
 
-// ✅ ГЛАВНЫЙ WEBHOOK ДЛЯ TELEGRAM
+// ✅ ГЛАВНЫЙ WEBHOOK ДЛЯ TELEGRAM - ИСПРАВЛЕНО
 app.post('/webhook/telegram', async (req, res) => {
   console.log('\n🔔 === TELEGRAM WEBHOOK RECEIVED ===');
   console.log('📥 Update ID:', req.body.update_id);
 
   try {
-    const { pre_checkout_query, message, update_id } = req.body;
+    const { pre_checkout_query, message } = req.body;
 
-    // ✅ PRE-CHECKOUT QUERY (платеж в ожидании)
+    // ✅ 1. PRE-CHECKOUT QUERY (проверка перед платежом)
     if (pre_checkout_query) {
       console.log('💳 === PRE-CHECKOUT QUERY ===');
-      
+      console.log('📋 Payload:', pre_checkout_query.invoice_payload);
+
       try {
         const parsed = JSON.parse(pre_checkout_query.invoice_payload);
-        
+
         if (!parsed.orderId) {
+          console.error('❌ Missing orderId in payload');
           await fetch(
             `https://api.telegram.org/bot${BOT_TOKEN}/answerPreCheckoutQuery`,
             {
@@ -113,10 +110,26 @@ app.post('/webhook/telegram', async (req, res) => {
           );
           return res.sendStatus(400);
         }
+
+        console.log('✅ Order ID validated:', parsed.orderId);
       } catch (err) {
-        console.error('❌ Invalid JSON in pre-checkout payload');
+        console.error('❌ Invalid JSON in pre-checkout payload:', err);
+        await fetch(
+          `https://api.telegram.org/bot${BOT_TOKEN}/answerPreCheckoutQuery`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              pre_checkout_query_id: pre_checkout_query.id,
+              ok: false,
+              error_message: "Invalid payload format"
+            })
+          }
+        );
+        return res.sendStatus(400);
       }
 
+      // Подтверждаем платеж
       await fetch(
         `https://api.telegram.org/bot${BOT_TOKEN}/answerPreCheckoutQuery`,
         {
@@ -133,14 +146,216 @@ app.post('/webhook/telegram', async (req, res) => {
       return res.sendStatus(200);
     }
 
-    // ✅ ОБЫЧНЫЕ СООБЩЕНИЯ (текст, фото, видео, команды)
+    // ✅ 2. SUCCESSFUL PAYMENT (подтверждение платежа) - ИСПРАВЛЕНО
+    if (message?.successful_payment) {
+      console.log('💰 === PROCESSING SUCCESSFUL PAYMENT ===');
+
+      const payment = message.successful_payment;
+      const { invoice_payload, total_amount, telegram_payment_charge_id } = payment;
+
+      console.log('💳 Payment details:', {
+        total_amount,
+        telegram_payment_charge_id,
+        invoice_payload
+      });
+
+      let orderId;
+      try {
+        const parsed = JSON.parse(invoice_payload);
+        orderId = parsed.orderId;
+        console.log('🆔 Extracted orderId:', orderId);
+
+        if (!orderId) {
+          console.error('❌ orderId is missing');
+          return res.sendStatus(400);
+        }
+      } catch (err) {
+        console.error("❌ Failed to parse invoice_payload:", err);
+        return res.sendStatus(400);
+      }
+
+      // Получаем заказ с полными данными
+      const existingOrder = await prisma.order.findUnique({
+        where: { id: orderId },
+        include: {
+          user: true,
+          orderItems: {
+            include: {
+              product: true,
+              bundle: {
+                include: {
+                  images: true,
+                  videos: true
+                }
+              }
+            }
+          }
+        }
+      });
+
+      if (!existingOrder) {
+        console.error(`❌ Order ${orderId} NOT FOUND`);
+        return res.sendStatus(404);
+      }
+
+      console.log('✅ Order found:', existingOrder.id, 'Type:', existingOrder.orderType);
+
+      // Обновляем статус заказа
+      await prisma.order.update({
+        where: { id: orderId },
+        data: {
+          paymentStatus: 'CONFIRMED',
+          status: 'PROCESSING',
+          screenshot: telegram_payment_charge_id,
+          updatedAt: new Date()
+        }
+      });
+
+      console.log('✅ Order status updated to CONFIRMED');
+
+      const userId = message.from.id;
+
+      // 🎁 DONATION - обрабатываем отдельно
+      if (existingOrder.orderType === 'DONATION') {
+        try {
+          let thankYouMessage = `✅ Payment confirmed!\n\n💰 Amount: ${total_amount} Stars\n\n🙏 Thank you so much for your donation of $${existingOrder.totalAmount}! ❤️`;
+
+          if (existingOrder.donationMessage) {
+            thankYouMessage += `\n\n📩 Your message:\n"${existingOrder.donationMessage}"`;
+          }
+
+          await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              chat_id: userId,
+              text: thankYouMessage
+            })
+          });
+
+          console.log(`✅ Donation thank-you sent to user ${userId}`);
+        } catch (err) {
+          console.error('❌ Error sending donation message:', err);
+        }
+
+        console.log('🎉 === DONATION PROCESSING COMPLETED ===\n');
+        return res.sendStatus(200);
+      }
+
+      // 📦 ОБЫЧНЫЕ ЗАКАЗЫ (товары, бандлы, услуги)
+      try {
+        // Отправка благодарности
+        await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            chat_id: userId,
+            text: `✅ Payment confirmed!\n\n💫 Order #${orderId}\n💰 Amount: ${total_amount} Stars\n\n🎉 Thank you for your purchase!`,
+            parse_mode: 'HTML'
+          })
+        });
+
+        // Отправка товаров/бандлов
+        for (const item of existingOrder.orderItems) {
+          if (item.product) {
+            await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendPhoto`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                chat_id: userId,
+                photo: item.product.image,
+                caption: `📦 ${item.product.name}\n💰 Price: ${item.product.price} USD\n\n${item.product.description || ''}`
+              })
+            });
+          } else if (item.bundle) {
+            if (item.bundle.image) {
+              await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendPhoto`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  chat_id: userId,
+                  photo: item.bundle.image,
+                  caption: `🎁 ${item.bundle.name}\n💰 Price: ${item.bundle.price} USD\n\n${item.bundle.description || ''}`
+                })
+              });
+            }
+
+            for (const img of item.bundle.images || []) {
+              await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendPhoto`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  chat_id: userId,
+                  photo: img.url
+                })
+              });
+            }
+
+            for (const vid of item.bundle.videos || []) {
+              await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendVideo`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  chat_id: userId,
+                  video: vid.url
+                })
+              });
+            }
+          }
+        }
+
+        // Обработка специальных типов заказов
+        if (existingOrder.orderType === 'CUSTOM_VIDEO') {
+          await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              chat_id: userId,
+              text: `📹 Your personalized video will be ready soon!`
+            })
+          });
+        } else if (existingOrder.orderType === 'VIDEO_CALL') {
+          await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              chat_id: userId,
+              text: `📞 Thank you! Our manager will contact you soon.`
+            })
+          });
+        } else if (existingOrder.orderType === 'VIP') {
+          await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              chat_id: userId,
+              text: `👑 You are now a VIP client!`
+            })
+          });
+        } else if (existingOrder.orderType === 'RATING') {
+          await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              chat_id: userId,
+              text: `⭐ Thank you for your support!`
+            })
+          });
+        }
+
+        console.log(`✅ Content delivered to user ${userId}`);
+      } catch (err) {
+        console.error('❌ Error sending content:', err);
+      }
+
+      console.log('🎉 === PAYMENT PROCESSING COMPLETED ===\n');
+      return res.sendStatus(200);
+    }
+
+    // ✅ 3. ОБЫЧНЫЕ СООБЩЕНИЯ (текст, фото, видео, команды)
     if (message) {
-      if (message.successful_payment) {
-        console.log('💰 === SUCCESSFUL PAYMENT DETECTED ===');
-        // Обработка платежа - см. ниже
-      } else if (message.text || message.photo || message.video || message.document) {
+      if (message.text || message.photo || message.video || message.document) {
         console.log('📨 === USER MESSAGE ===');
-        // ✅ Обрабатываем обычное сообщение
         try {
           await handleUserMessage(message);
         } catch (err) {
@@ -149,207 +364,6 @@ app.post('/webhook/telegram', async (req, res) => {
         return res.sendStatus(200);
       }
     }
-
-    // ✅ SUCCESSFUL PAYMENT (подтверждение платежа)
-  // ✅ SUCCESSFUL PAYMENT (подтверждение платежа)
-if (message?.successful_payment) {
-  console.log('💰 === PROCESSING SUCCESSFUL PAYMENT ===');
-
-  const payment = message.successful_payment;
-  const { invoice_payload, total_amount, telegram_payment_charge_id } = payment;
-
-  let orderId;
-  try {
-    const parsed = JSON.parse(invoice_payload);
-    orderId = parsed.orderId;
-    console.log('🆔 Extracted orderId:', orderId);
-
-    if (!orderId) {
-      console.error('❌ orderId is missing');
-      return res.sendStatus(400);
-    }
-  } catch (err) {
-    console.error("❌ Failed to parse invoice_payload");
-    return res.sendStatus(400);
-  }
-
-  // Получаем заказ с полными данными
-  const existingOrder = await prisma.order.findUnique({
-    where: { id: orderId },
-    include: {
-      user: true,
-      orderItems: {
-        include: {
-          product: true,
-          bundle: {
-            include: {
-              images: true,
-              videos: true
-            }
-          }
-        }
-      }
-    }
-  });
-
-  if (!existingOrder) {
-    console.error(`❌ Order ${orderId} NOT FOUND`);
-    return res.sendStatus(404);
-  }
-
-  console.log('✅ Order found:', existingOrder.id);
-
-  // Обновляем статус заказа
-  await prisma.order.update({
-    where: { id: orderId },
-    data: {
-      paymentStatus: 'CONFIRMED',
-      status: 'PROCESSING',
-      screenshot: telegram_payment_charge_id,
-      updatedAt: new Date()
-    }
-  });
-
-  console.log('✅ Order status updated to CONFIRMED');
-
-  const userId = message.from.id;
-
-  // 🎁 DONATION - обрабатываем отдельно
-  if (existingOrder.orderType === 'DONATION') {
-    try {
-      let thankYouMessage = `✅ Payment confirmed!\n\n💰 Amount: ${total_amount} Stars\n\n🙏 Thank you so much for your donation of $${existingOrder.totalAmount}! ❤️`;
-
-      if (existingOrder.donationMessage) {
-        thankYouMessage += `\n\n📩 Your message:\n"${existingOrder.donationMessage}"`;
-      }
-
-      await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          chat_id: userId,
-          text: thankYouMessage
-        })
-      });
-
-      console.log(`✅ Donation thank-you sent to user ${userId}`);
-    } catch (err) {
-      console.error('❌ Error sending donation message:', err);
-    }
-
-    console.log('🎉 === DONATION PROCESSING COMPLETED ===\n');
-    return res.sendStatus(200);
-  }
-
-  // 📦 ОБЫЧНЫЕ ЗАКАЗЫ (товары, бандлы, услуги)
-  try {
-    // Отправка благодарности
-    await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        chat_id: userId,
-        text: `✅ Payment confirmed!\n\n💫 Order #${orderId}\n💰 Amount: ${total_amount} Stars\n\n🎉 Thank you for your purchase!`,
-        parse_mode: 'HTML'
-      })
-    });
-
-    // Отправка товаров/бандлов
-    for (const item of existingOrder.orderItems) {
-      if (item.product) {
-        await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendPhoto`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            chat_id: userId,
-            photo: item.product.image,
-            caption: `📦 ${item.product.name}\n💰 Price: ${item.product.price} USD\n\n${item.product.description || ''}`
-          })
-        });
-      } else if (item.bundle) {
-        if (item.bundle.image) {
-          await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendPhoto`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              chat_id: userId,
-              photo: item.bundle.image,
-              caption: `🎁 ${item.bundle.name}\n💰 Price: ${item.bundle.price} USD\n\n${item.bundle.description || ''}`
-            })
-          });
-        }
-
-        for (const img of item.bundle.images || []) {
-          await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendPhoto`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              chat_id: userId,
-              photo: img.url
-            })
-          });
-        }
-
-        for (const vid of item.bundle.videos || []) {
-          await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendVideo`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              chat_id: userId,
-              video: vid.url
-            })
-          });
-        }
-      }
-    }
-
-    // Обработка специальных типов заказов
-    if (existingOrder.orderType === 'CUSTOM_VIDEO') {
-      await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          chat_id: userId,
-          text: `📹 Your personalized video will be ready soon!`
-        })
-      });
-    } else if (existingOrder.orderType === 'VIDEO_CALL') {
-      await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          chat_id: userId,
-          text: `📞 Thank you! Our manager will contact you soon.`
-        })
-      });
-    } else if (existingOrder.orderType === 'VIP') {
-      await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          chat_id: userId,
-          text: `👑 You are now a VIP client!`
-        })
-      });
-    } else if (existingOrder.orderType === 'RATING') {
-      await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          chat_id: userId,
-          text: `⭐ Thank you for your support!`
-        })
-      });
-    }
-
-    console.log(`✅ Content delivered to user ${userId}`);
-  } catch (err) {
-    console.error('❌ Error sending content:', err);
-  }
-
-  console.log('🎉 === PAYMENT PROCESSING COMPLETED ===\n');
-  return res.sendStatus(200);
-}
 
     console.log('⚠️ Unknown webhook type');
     res.sendStatus(200);
@@ -423,7 +437,6 @@ app.get('/health', (req, res) => {
 
 app.listen(PORT, () => {
   console.log(`Server is running on port ${PORT}`);
-  // Устанавливаем webhook после запуска сервера
   setTimeout(() => {
     setupWebhook();
   }, 2000);
