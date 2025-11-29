@@ -55,10 +55,19 @@ router.get('/payments', async (req, res) => {
 })
 
 // POST /api/orders/stars - Create Stars invoice
+// POST /api/orders/stars - Create Stars invoice - ИСПРАВЛЕНО
 router.post("/stars", async (req, res) => {
-  const { title, description, amount, userId, orderType, donationMessage } = req.body;
+  const { title, description, amount, userId, orderType, donationMessage, items } = req.body;
 
-  console.log("📥 Stars payment request:", { title, description, amount, userId, orderType, donationMessage });
+  console.log("📥 Stars payment request:", { 
+    title, 
+    description, 
+    amount, 
+    userId, 
+    orderType, 
+    donationMessage,
+    items 
+  });
 
   if (!userId) {
     return res.status(400).json({ error: "UserId is required" });
@@ -81,20 +90,74 @@ router.post("/stars", async (req, res) => {
       console.log("✅ Created new user:", user.id);
     }
 
-    // Create order with STARS payment type
+    // ✅ ИСПРАВЛЕНО: Создаем orderItems для PRODUCT/BUNDLE
+    const orderItems = [];
+    
+    if ((orderType === 'PRODUCT' || orderType === 'BUNDLE') && items && items.length > 0) {
+      console.log('🔎 Processing items for order...');
+      
+      for (const item of items) {
+        if (item.type === 'product') {
+          const product = await prisma.product.findUnique({
+            where: { id: item.id }
+          });
+          
+          if (product) {
+            orderItems.push({
+              productId: product.id,
+              quantity: item.quantity || 1,
+              price: product.price
+            });
+            console.log(`✅ Added product: ${product.name}`);
+          }
+        } else if (item.type === 'bundle') {
+          const bundle = await prisma.bundle.findUnique({
+            where: { id: item.id }
+          });
+          
+          if (bundle) {
+            orderItems.push({
+              bundleId: bundle.id,
+              quantity: 1,
+              price: bundle.price
+            });
+            console.log(`✅ Added bundle: ${bundle.name}`);
+          }
+        }
+      }
+    }
+
+    // Create order with orderItems
     const order = await prisma.order.create({
       data: {
         userId: user.id,
         orderType: orderType,
         paymentMethod: "STARS",
-        totalAmount: amount / 100, // Convert stars to USD (approximate)
+        totalAmount: amount / 100, // Convert stars to USD
         status: "PENDING",
         paymentStatus: "PENDING",
-        donationMessage: donationMessage || null, // <-- Сохраняем сообщение, если есть
+        donationMessage: donationMessage || null,
+        // ✅ ИСПРАВЛЕНО: Добавляем orderItems
+        orderItems: orderItems.length > 0 ? {
+          create: orderItems
+        } : undefined
       },
+      include: {
+        orderItems: {
+          include: {
+            product: true,
+            bundle: {
+              include: {
+                images: true,
+                videos: true
+              }
+            }
+          }
+        }
+      }
     });
 
-    console.log("✅ Order created:", order.id);
+    console.log("✅ Order created:", order.id, "with", orderItems.length, "items");
 
     // Create invoice via Telegram Bot API
     const telegramResponse = await axios.post(
@@ -152,7 +215,6 @@ router.post("/stars", async (req, res) => {
     });
   }
 });
-
 // POST /api/orders - Create order
 router.post('/', [
   body('userId').notEmpty().withMessage('User ID is required'),
